@@ -7,10 +7,9 @@ scala:
   - 2.12.9
 jdk:
   - openjdk8
-python:
-  - 3.8
 before_install:
-  - alias python=python3
+  - sudo apt-get update
+  - sudo apt-get install python3.8
   - python --version
   - python3 --version
 cache:
