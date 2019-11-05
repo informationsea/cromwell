@@ -12,6 +12,7 @@ python:
 before_install:
   - alias python=python3
   - python --version
+  - python3 --version
 cache:
   directories:
     - $HOME/.ivy2/cache
