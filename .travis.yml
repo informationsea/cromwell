@@ -9,6 +9,8 @@ jdk:
   - openjdk8
 python:
   - 3.8
+before_install:
+  - python --version
 cache:
   directories:
     - $HOME/.ivy2/cache
