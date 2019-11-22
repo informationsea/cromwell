@@ -1,5 +1,7 @@
 package cromwell.services.metadata.impl
 
+import java.util.Calendar
+
 import cats.Semigroup
 import cats.data.NonEmptyList
 import cats.instances.future._
@@ -88,6 +90,7 @@ trait MetadataDatabaseAccess {
   this: MetadataServicesStore =>
 
   def addMetadataEvents(metadataEvents: Iterable[MetadataEvent])(implicit ec: ExecutionContext): Future[Unit] = {
+    println("*************** FIND ME STARTS ******************")
     val metadata = metadataEvents map { metadataEvent =>
       val key = metadataEvent.key
       val workflowUuid = key.workflowId.id.toString
@@ -95,9 +98,21 @@ trait MetadataDatabaseAccess {
       val value = metadataEvent.value map { _.value }
       val valueType = metadataEvent.value map { _.valueType.typeName }
       val jobKey = key.jobKey map { jk => (jk.callFqn, jk.index, jk.attempt) }
+
+      println("---------------------------------------------------")
+      println(s"Inserting at ${Calendar.getInstance().getTime}:")
+      println(s"ID:$workflowUuid")
+      println(s"KEY:${key.key}")
+      println(s"CALL_FQN:${jobKey.map(_._1)}")
+      println(s"VALUE:$value")
+
+
       MetadataEntry(workflowUuid, jobKey.map(_._1), jobKey.flatMap(_._2), jobKey.map(_._3),
         key.key, value.toClobOption, valueType, timestamp)
     }
+
+    println("*************** FIND ME ENDS ******************")
+
     metadataDatabaseInterface.addMetadataEntries(metadata)
   }
 

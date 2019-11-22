@@ -17,6 +17,7 @@ import scala.concurrent.duration._
 class DeleteWorkflowFilesActorSpec extends TestKitSuite("DeleteWorkflowFilesActorSpec") with FlatSpecLike with Matchers {
 
   val serviceRegistryActor = TestProbe()
+  val ioActor = TestProbe().ref
 
   val mockPathBuilder: GcsPathBuilder = MockGcsPathBuilder.instance
   val mockPathBuilders = List(mockPathBuilder)
@@ -24,7 +25,7 @@ class DeleteWorkflowFilesActorSpec extends TestKitSuite("DeleteWorkflowFilesActo
   it should "follow the expected golden-path lifecycle" in {
     val rootWorkflowId = RootWorkflowId(WorkflowId.randomId().id)
     val subworkflowId = WorkflowId.randomId()
-    val testDeleteWorkflowFilesActor = TestFSMRef(new MockDeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor.ref, mockPathBuilders))
+    val testDeleteWorkflowFilesActor = TestFSMRef(new MockDeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor.ref, mockPathBuilders, ioActor))
 
     val allOutputsMetadataEvents = Vector(
       MetadataEvent(
@@ -93,7 +94,7 @@ class DeleteWorkflowFilesActorSpec extends TestKitSuite("DeleteWorkflowFilesActo
   it should "remove any non-file intermediate outputs" in {
     val rootWorkflowId = RootWorkflowId(WorkflowId.randomId().id)
     val subworkflowId = WorkflowId.randomId()
-    val testDeleteWorkflowFilesActor = TestFSMRef(new MockDeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor.ref, mockPathBuilders))
+    val testDeleteWorkflowFilesActor = TestFSMRef(new MockDeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor.ref, mockPathBuilders, ioActor))
 
     val allOutputsMetadataEvents = Vector(
       MetadataEvent(
@@ -149,7 +150,7 @@ class DeleteWorkflowFilesActorSpec extends TestKitSuite("DeleteWorkflowFilesActo
   it should "delete all file outputs if there are no final outputs" in {
     val rootWorkflowId = RootWorkflowId(WorkflowId.randomId().id)
     val subworkflowId = WorkflowId.randomId()
-    val testDeleteWorkflowFilesActor = TestFSMRef(new MockDeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor.ref, mockPathBuilders))
+    val testDeleteWorkflowFilesActor = TestFSMRef(new MockDeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor.ref, mockPathBuilders, ioActor))
 
     val allOutputsMetadataEvents = Vector(
       MetadataEvent(
@@ -214,7 +215,7 @@ class DeleteWorkflowFilesActorSpec extends TestKitSuite("DeleteWorkflowFilesActo
   it should "terminate if root workflow has no outputs" in {
     val testProbe = TestProbe()
     val rootWorkflowId = RootWorkflowId(WorkflowId.randomId().id)
-    val testDeleteWorkflowFilesActor = TestFSMRef(new MockDeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor.ref, mockPathBuilders))
+    val testDeleteWorkflowFilesActor = TestFSMRef(new MockDeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor.ref, mockPathBuilders, ioActor))
 
     testProbe watch testDeleteWorkflowFilesActor
 
@@ -237,7 +238,7 @@ class DeleteWorkflowFilesActorSpec extends TestKitSuite("DeleteWorkflowFilesActo
     val testProbe = TestProbe()
     val rootWorkflowId = RootWorkflowId(WorkflowId.randomId().id)
     val subworkflowId = WorkflowId.randomId()
-    val testDeleteWorkflowFilesActor = TestFSMRef(new MockDeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor.ref, mockPathBuilders))
+    val testDeleteWorkflowFilesActor = TestFSMRef(new MockDeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor.ref, mockPathBuilders, ioActor))
 
     val allOutputsMetadataEvents = Vector(
       MetadataEvent(
@@ -289,5 +290,5 @@ class DeleteWorkflowFilesActorSpec extends TestKitSuite("DeleteWorkflowFilesActo
 }
 
 
-class MockDeleteWorkflowFilesActor(rootWorkflowId: RootWorkflowId, serviceRegistryActor: ActorRef, pathBuilders: PathBuilders) extends
-  DeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor, pathBuilders) { }
+class MockDeleteWorkflowFilesActor(rootWorkflowId: RootWorkflowId, serviceRegistryActor: ActorRef, pathBuilders: PathBuilders, ioActor: ActorRef) extends
+  DeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor, pathBuilders, ioActor) { }

@@ -1,19 +1,27 @@
 package cromwell.engine.workflow.lifecycle.deletion
 
+import java.util.Calendar
+
 import akka.actor.{ActorRef, LoggingFSM, Props}
 import cromwell.core.RootWorkflowId
+import cromwell.core.io.AsyncIo
 import cromwell.core.path.{DefaultPathBuilder, Path, PathBuilder, PathFactory}
 import cromwell.engine.workflow.lifecycle.deletion.DeleteWorkflowFilesActor._
+import cromwell.filesystems.gcs.batch.GcsBatchCommandBuilder
 import cromwell.services.metadata.MetadataEvent
 import cromwell.services.metadata.MetadataService.{GetRootAndSubworkflowOutputs, RootAndSubworkflowOutputsLookupFailure, RootAndSubworkflowOutputsLookupResponse, WorkflowOutputs, WorkflowOutputsFailure, WorkflowOutputsResponse}
 import cromwell.util.GracefulShutdownHelper.ShutdownCommand
 import org.apache.commons.lang3.exception.ExceptionUtils
 
+import scala.concurrent.ExecutionContext
 import scala.util.Try
 
 class DeleteWorkflowFilesActor(rootWorkflowId: RootWorkflowId,
                                serviceRegistryActor: ActorRef,
-                               pathBuilders: List[PathBuilder]) extends LoggingFSM[DeleteWorkflowFilesActorState, DeleteWorkflowFilesActorStateData] {
+                               pathBuilders: List[PathBuilder],
+                               ioActor: ActorRef) extends LoggingFSM[DeleteWorkflowFilesActorState, DeleteWorkflowFilesActorStateData] {
+
+  implicit val ec: ExecutionContext = context.dispatcher
 
   /*
   building a path for a string output such as 'Hello World' satisfies the conditions of a
@@ -21,6 +29,7 @@ class DeleteWorkflowFilesActor(rootWorkflowId: RootWorkflowId,
   (this is because we only want cloud backend paths like gs://, s3://, etc.)
    */
   val pathBuildersWithoutDefault = pathBuilders.filterNot(_ == DefaultPathBuilder)
+  val asyncIO = new AsyncIo(ioActor, GcsBatchCommandBuilder)
 
   startWith(Pending, NoData)
 
@@ -48,8 +57,14 @@ class DeleteWorkflowFilesActor(rootWorkflowId: RootWorkflowId,
 
   when(FetchingFinalOutputs) {
     case Event(WorkflowOutputsResponse(_, metadataEvents), FetchingFinalOutputsData(allOutputs)) =>
+      println(s"#################################### THIS IS WHERE I NEED THINGS TO BE RIGHT!! Time right now ${Calendar.getInstance().getTime} ####################################")
+      println(s"#################################### but found finalOutputs:${metadataEvents.size} and allOutputs:${allOutputs.size} !! ####################################")
       val intermediateOutputs = gatherIntermediateOutputFiles(allOutputs, metadataEvents)
-      if (intermediateOutputs.nonEmpty) goto(DeletingIntermediateFiles) using DeletingIntermediateFilesData(intermediateOutputs)
+      if (intermediateOutputs.nonEmpty) {
+//        self ! DeleteFiles
+//        goto(DeletingIntermediateFiles) using DeletingIntermediateFilesData(intermediateOutputs)
+        stopSelf()
+      }
       else {
         log.info(s"Root workflow ${rootWorkflowId.id} does not have any intermediate output files to delete.")
         stopSelf()
@@ -62,7 +77,13 @@ class DeleteWorkflowFilesActor(rootWorkflowId: RootWorkflowId,
 
   //TODO: To be done as part of WA-41 (https://broadworkbench.atlassian.net/browse/WA-41)
   when(DeletingIntermediateFiles) {
-    case Event(_, _) => stopSelf()
+    case Event(DeleteFiles, DeletingIntermediateFilesData(intermediateFiles)) => {
+      asyncIO.deleteAsync(intermediateFiles.head) onComplete {
+        _ =>
+          stopSelf()
+      }
+      stay()
+    }
   }
 
   whenUnhandled {
@@ -110,6 +131,7 @@ object DeleteWorkflowFilesActor {
   // Commands
   sealed trait DeleteWorkflowFilesActorMessage
   object StartWorkflowFilesDeletion extends DeleteWorkflowFilesActorMessage
+  object DeleteFiles extends  DeleteWorkflowFilesActorMessage
 
   // Actor states
   sealed trait DeleteWorkflowFilesActorState
@@ -125,7 +147,7 @@ object DeleteWorkflowFilesActor {
   case class DeletingIntermediateFilesData(intermediateFiles: Set[Path]) extends DeleteWorkflowFilesActorStateData
 
 
-  def props(rootWorkflowId: RootWorkflowId, serviceRegistryActor: ActorRef, pathBuilders: List[PathBuilder]): Props = {
-    Props(new DeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor, pathBuilders))
+  def props(rootWorkflowId: RootWorkflowId, serviceRegistryActor: ActorRef, pathBuilders: List[PathBuilder], ioActor: ActorRef): Props = {
+    Props(new DeleteWorkflowFilesActor(rootWorkflowId, serviceRegistryActor, pathBuilders, ioActor))
   }
 }
