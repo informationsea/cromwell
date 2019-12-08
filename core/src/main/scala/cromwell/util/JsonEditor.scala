@@ -15,7 +15,6 @@ import io.circe.Json.Folder
 import io.circe.{Json, JsonNumber, JsonObject, Printer}
 
 import scala.collection.immutable
-import scala.language.postfixOps
 
 object JsonEditor {
 
@@ -92,7 +91,7 @@ object JsonEditor {
 
   sealed trait FilterResult
   case object Keep extends FilterResult
-  case object Remove extends FilterResult
+  case object Discard extends FilterResult
   case class Replace(updatedJson: Json) extends FilterResult
 
   /** A `FilterGroup` represents all the `Filter`s for include xor exclude. The argument is intentionally not a NEL
@@ -103,18 +102,34 @@ object JsonEditor {
       remove(Filter.fromString(head), tail map Filter.fromString: _*)
     }
 
+    /** Return a copy of this `FilterGroup` with all of the specified filters removed. */
     def remove(head: Filter, tail: Filter*): FilterGroup = {
       (head :: tail.toList).foldLeft(this) { case (acc, f) =>
-        // Return a copy of the `FilterGroup` with any filters that are the same or more specific than `f` removed.
+        // Copy the `acc` `FilterGroup` with any filters that are the same or more specific than `f` removed.
         acc.copy(acc.filters.filterNot { _.isSameOrMoreSpecificThan(f) })
       }
     }
 
-    def runFilter(objectKey: String, objectValue: Json): FilterResult = {
+    /**
+      * Run all the filters in this `FilterGroup` against the specified `objectKey` and `objectValue` and return a `FilterResult`
+      * that informs the caller how to proceed.
+      */
+    private def runFilter(objectKey: String, objectValue: Json): FilterResult = {
       // CARBONITE FIXING temp hack not supporting colon syntax for drilling in but hopefully the shape is closer to
       // what will be required for that. The object should satisfy this predicate and then there must be a nesting
       // of objects with keys matching the remaining components of the filter.
-      if (filters.exists(_.components.head == objectKey)) Remove else Keep
+      if (filters.exists(_.components.head == objectKey)) Discard else Keep
+    }
+
+    def filter(jsonObject: JsonObject): JsonObject = {
+      val updatedKeyValues: List[(String, Json)] = jsonObject.toList flatMap { case (key, json) =>
+        runFilter(key, json) match {
+          case Discard => Nil
+          case Keep => List((key, json))
+          case Replace(updatedJson) => List((key, updatedJson))
+        }
+      }
+      JsonObject.fromIterable(updatedKeyValues)
     }
   }
 
@@ -133,9 +148,7 @@ object JsonEditor {
     val workflowKeysToExclude = filters.remove("id")
     val jobKeysToExclude = filters.remove("shardIndex", "attempt")
 
-    def excludeJob(job: JsonObject): ErrorOr[JsonObject] = {
-      job.filter { case (key, json) => jobKeysToExclude.runFilter(key, json) == Keep } validNel
-    }
+    def excludeJob(job: JsonObject): ErrorOr[JsonObject] = jobKeysToExclude.filter(job).validNel
 
     def excludeCall(callJson: Json): ErrorOr[Json] = {
       def excludeSubworkflowCall(parentWorkflowCall: JsonObject)(subworkflow: Json): ErrorOr[JsonObject] = {
@@ -161,7 +174,7 @@ object JsonEditor {
 
     for {
       workflowObject <- workflowJson.asObject.map(_.validNel).getOrElse(s"Workflow JSON unexpectedly not an object: $workflowJson".invalidNel)
-      workflowObjectWithKeysFiltered = workflowObject filter { case (key, json) => workflowKeysToExclude.runFilter(key, json) == Keep }
+      workflowObjectWithKeysFiltered = workflowKeysToExclude.filter(workflowObject)
       updatedWorkflowJsonObject <- workflowObjectWithKeysFiltered("calls") match {
         case None => workflowObjectWithKeysFiltered.validNel
         case Some(calls) => calls.asObject match {
