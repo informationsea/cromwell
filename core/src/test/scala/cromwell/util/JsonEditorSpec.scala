@@ -40,6 +40,7 @@ class JsonEditorSpec extends FlatSpec with Matchers {
   }
 
   it should "remove nested excludes in workflows" in {
+    // This test intentionally applies multiple colon separated filters with the same outermost term.
     val actual = excludeJson(helloWorldJson, NonEmptyList.of("calls", "submittedFiles:workflowUrl", "submittedFiles:imports:sub_workflow_hello_world_import.wdl", "actualWorkflowLanguage")).get
     val expectedMetadata =
       """
