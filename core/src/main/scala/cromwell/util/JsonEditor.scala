@@ -74,8 +74,8 @@ object JsonEditor {
       // A request to remove a filter of 'outputs' should also remove a more specific 'outputs:foo' filter if present.
       // This algorithm effectively converts `Filter`s to representations in classic metadata syntax to see if `that`
       // filter is a prefix of `this` filter, i.e. if `this` is a more specific filter of `that`.
-      def classicize(filter: Filter): String = filter.components.toList.mkString("", ":", ":")
-      val List(thisComponents, thatComponents) = List(this, that) map classicize
+      def toClassic(filter: Filter): String = filter.components.toList.mkString("", ":", ":")
+      val List(thisComponents, thatComponents) = List(this, that) map toClassic
       thisComponents startsWith thatComponents
     }
   }
@@ -115,10 +115,31 @@ object JsonEditor {
       * that informs the caller how to proceed.
       */
     private def runFilter(objectKey: String, objectValue: Json): FilterResult = {
-      // CARBONITE FIXING temp hack not supporting colon syntax for drilling in but hopefully the shape is closer to
-      // what will be required for that. The object should satisfy this predicate and then there must be a nesting
-      // of objects with keys matching the remaining components of the filter.
-      if (filters.exists(_.components.head == objectKey)) Discard else Keep
+      def descend(json: Json, remainingFilters: NonEmptyList[String]): Json = {
+        json.asObject match {
+          case None => json
+          case Some(jsonObject) =>
+            val key = remainingFilters.head
+            jsonObject(key) match {
+              case None => json
+              case Some(inner) =>
+                val updatedObject = remainingFilters.tail match {
+                  case Nil => jsonObject.remove(key)
+                  case h :: t => jsonObject.add(key, descend(inner, NonEmptyList.of(h, t: _*)))
+                }
+                Json.fromJsonObject(updatedObject)
+            }
+          }
+        }
+
+      filters.find(_.components.head == objectKey) match {
+        case None => Keep
+        case Some(filter) =>
+          filter.components.tail match {
+            case Nil => Discard
+            case h :: t => Replace(descend(objectValue, NonEmptyList.of(h, t: _*)))
+          }
+      }
     }
 
     def filter(jsonObject: JsonObject): JsonObject = {
