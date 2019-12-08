@@ -110,44 +110,50 @@ object JsonEditor {
       }
     }
 
-    /**
-      * Run all the filters in this `FilterGroup` against the specified `objectKey` and `objectValue` and return a `FilterResult`
-      * that informs the caller how to proceed.
-      */
-    private def runFilter(objectKey: String, objectValue: Json): FilterResult = {
-      def descend(json: Json, remainingFilters: NonEmptyList[String]): Json = {
+    def filter(jsonObject: JsonObject): JsonObject = {
+      // If at the top level there is a perfect match, discard.
+      // If at the top level there are no matches at all, keep.
+      // Otherwise fold.
+      def filtersMatchingKey(objectKey: String): List[Filter] = filters.filter(_.components.head == objectKey)
+
+      def descend(json: Json, remainingComponents: NonEmptyList[String]): Json = {
         json.asObject match {
           case None => json
           case Some(jsonObject) =>
-            val key = remainingFilters.head
-            jsonObject(key) match {
+            val component = remainingComponents.head
+            jsonObject(component) match {
               case None => json
               case Some(inner) =>
-                val updatedObject = remainingFilters.tail match {
-                  case Nil => jsonObject.remove(key)
-                  case h :: t => jsonObject.add(key, descend(inner, NonEmptyList.of(h, t: _*)))
+                val updatedObject = remainingComponents.tail match {
+                  case Nil => jsonObject.remove(component)
+                  case h :: t => jsonObject.add(component, descend(inner, NonEmptyList.of(h, t: _*)))
                 }
                 Json.fromJsonObject(updatedObject)
             }
-          }
         }
-
-      filters.find(_.components.head == objectKey) match {
-        case None => Keep
-        case Some(filter) =>
-          filter.components.tail match {
-            case Nil => Discard
-            case h :: t => Replace(descend(objectValue, NonEmptyList.of(h, t: _*)))
-          }
       }
-    }
 
-    def filter(jsonObject: JsonObject): JsonObject = {
       val updatedKeyValues: List[(String, Json)] = jsonObject.toList flatMap { case (key, json) =>
-        runFilter(key, json) match {
-          case Discard => Nil
-          case Keep => List((key, json))
-          case Replace(updatedJson) => List((key, updatedJson))
+        filtersMatchingKey(key) match {
+          case Nil =>
+            // No filters matched this object key, return the key/value unmodified.
+            List((key, json))
+          case fs if fs.exists(_.components.tail == Nil) =>
+            // If there is a filter that has no other components and thus matches the object key completely,
+            // return a Nil List to delete the key/value pair from the object.
+            Nil
+          case fs =>
+            // The JSON value will not be deleted but may need to be edited. Fold the JSON through all the
+            // `fs` filters.
+            val possiblyUpdatedJson = fs.foldLeft(json) { case (j, f) =>
+              f.components.tail match {
+                // We know all of these filters did not have have "tails", i.e. did not
+                // match the object key and thus signal that the key/value should be removed.
+                case Nil => throw new RuntimeException("Programmer error: filter components tail should not be empty")
+                case c :: cs => descend(j, NonEmptyList.of(c, cs: _*))
+              }
+            }
+            List((key, possiblyUpdatedJson))
         }
       }
       JsonObject.fromIterable(updatedKeyValues)

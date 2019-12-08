@@ -60,7 +60,6 @@ class JsonEditorSpec extends FlatSpec with Matchers {
         |    "main_workflow.main_output": "Hello sub world!"
         |  },
         |  "workflowRoot": "/home/dan/cromwell/cromwell-executions/main_workflow/757d0bcc-b636-4658-99d4-9b4b3767f1d1",
-        |  "actualWorkflowLanguage": "WDL",
         |  "id": "757d0bcc-b636-4658-99d4-9b4b3767f1d1",
         |  "inputs": {},
         |  "labels": {
