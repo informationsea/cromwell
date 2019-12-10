@@ -141,13 +141,76 @@ object JsonEditor {
     }
   }
 
-  def excludeJson(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = {
-    val filters: ErrorOr[List[Filter]] = keys.toList traverse { key => key.split(':').toList match {
-      case Nil => s"Programmer error: string split resulting in empty array: $key".invalidNel
-      case h :: t => Filter(NonEmptyList.of(h, t: _*)).validNel
-    }}
+  object FilterGroup {
+    def build(keys: NonEmptyList[String]): ErrorOr[FilterGroup] = {
+      val filters: ErrorOr[List[Filter]] = keys.toList traverse { key => key.split(':').toList match {
+        case Nil => s"Programmer error: string split resulting in empty array: $key".invalidNel
+        case h :: t => Filter(NonEmptyList.of(h, t: _*)).validNel
+      }}
+      filters map FilterGroup.apply
+    }
+  }
 
-    filters map FilterGroup.apply flatMap applyExcludes(json)
+  def excludeJson(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = FilterGroup.build(keys) flatMap applyExcludes(json)
+
+  def includeJsonNouveau(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = FilterGroup.build(keys) flatMap applyIncludes(json)
+
+  private def applyIncludes(workflowJson: Json)(filterGroup: FilterGroup): ErrorOr[Json] = {
+    // Will return an empty JsonObject if there are no fields left in the workflow after filtering.
+    def shallowFilter(jsonObject: JsonObject): JsonObject = {
+      jsonObject filterKeys { key =>
+        filterGroup.filters.exists(_.components.head == key)
+      }
+    }
+
+    // Will return an empty JsonObject if there are no calls in this workflow at all.
+    def filterCalls(workflowObject: JsonObject): ErrorOr[JsonObject] = {
+      def filterCallEntry(json: Json): ErrorOr[JsonObject] = ???
+
+      def filterCallsArray(json: Json): ErrorOr[Json] = {
+        json.asArray match {
+          case None => s"Calls array unexpectedly not an array: $json".invalidNel
+          case Some(array) =>
+            val filteredCalls: ErrorOr[Vector[JsonObject]] = array traverse filterCallEntry
+            val nonEmptyObjects: ErrorOr[Vector[JsonObject]] = filteredCalls map { _.filter(_.nonEmpty) }
+            nonEmptyObjects map { objs => Json.fromValues(objs map Json.fromJsonObject) }
+        }
+      }
+
+      val callsAsObject: ErrorOr[JsonObject] = workflowObject("calls") match {
+        case None => JsonObject.empty.validNel
+        case Some(cs) =>
+         cs.asObject map { _.validNel } getOrElse s"calls JSON unexpectedly not an array: $cs".invalidNel
+      }
+
+      for {
+        callsObject <- callsAsObject
+        traversed <- callsObject traverse filterCallsArray
+      } yield traversed
+    }
+
+    def buildWorkflowObject(workflowObject: JsonObject,
+                            filteredCalls: JsonObject,
+                            filteredWorkflow: JsonObject,
+                            forceWorkflowId: Boolean = false): JsonObject = {
+
+      // If the predicate returns true the transform will be applied to a JsonObject argument.
+      case class PredicateAndTransform(predicate: () => Boolean, transform: JsonObject => JsonObject)
+      val predicatesAndTransforms = List(
+        PredicateAndTransform(() => filteredCalls.nonEmpty, _.add("calls", Json.fromJsonObject(filteredCalls))),
+        PredicateAndTransform(() => filteredCalls.nonEmpty || filteredWorkflow.nonEmpty || forceWorkflowId, _.add("id", workflowObject("id").get))
+      )
+
+      predicatesAndTransforms.foldLeft(filteredWorkflow) { case (w, pt) => if (pt.predicate()) pt.transform(w) else w }
+    }
+
+    import common.validation.ErrorOr._
+    for {
+      workflowObject <- workflowJson.asObject.map(_.validNel).getOrElse(s"Workflow JSON unexpectedly not an object: $workflowJson".invalidNel)
+      filteredCalls <- filterCalls(workflowObject)
+      filteredWorkflow = shallowFilter(workflowObject)
+      builtWorkflowObject = buildWorkflowObject(workflowObject, filteredCalls, filteredWorkflow)
+    } yield Json.fromJsonObject(builtWorkflowObject)
   }
 
   private def applyExcludes(workflowJson: Json)(filterGroup: FilterGroup): ErrorOr[Json] = {
