@@ -121,22 +121,28 @@ object JsonEditor {
       }
     }
     // If the predicate returns true the transform will be applied to a JsonObject argument.
-    case class PredicateAndTransform(predicate: Boolean, transform: JsonObject => JsonObject)
+    case class ConditionalTransform(predicate: Boolean, transform: JsonObject => JsonObject) {
+      def run(jsonObject: JsonObject): JsonObject = if (predicate) transform(jsonObject) else jsonObject
+    }
 
-    // Will return an empty JsonObject if all calls have been filtered out or if there were never any calls
-    // in this workflow.
+    def runConditionalTranforms(conditionalTransforms: List[ConditionalTransform], jsonObject: JsonObject): JsonObject = {
+      conditionalTransforms.foldLeft(jsonObject) { case (j, pt) => pt.run(j) }
+    }
+
+    // Returns an empty JsonObject if all calls have been filtered out or if there were never any calls to begin with.
     def filterCalls(workflowObject: JsonObject): ErrorOr[JsonObject] = {
       def buildCallObject(unfilteredCallObject: JsonObject, shallowFilteredCallObject: JsonObject, filteredSubworkflow: JsonObject): JsonObject = {
-        val predicateAndTransforms = List(
-          PredicateAndTransform(
+        val transforms = List(
+          ConditionalTransform(
             shallowFilteredCallObject.nonEmpty || filteredSubworkflow.nonEmpty,
             _.add("shardIndex", unfilteredCallObject("shardIndex").get).add("attempt", unfilteredCallObject("attempt").get)
           ),
-          PredicateAndTransform(
+          ConditionalTransform(
             filteredSubworkflow.nonEmpty,
             _.add(subWorkflowMetadataKey, Json.fromJsonObject(filteredSubworkflow))
-          ))
-        predicateAndTransforms.foldLeft(shallowFilteredCallObject) { case (c, pt) => if (pt.predicate) pt.transform(c) else c }
+          )
+        )
+        runConditionalTranforms(transforms, shallowFilteredCallObject)
       }
 
       def filterCallEntry(json: Json): ErrorOr[JsonObject] = {
@@ -181,12 +187,17 @@ object JsonEditor {
                             filteredWorkflow: JsonObject,
                             forceWorkflowId: Boolean = false): JsonObject = {
 
-      val predicatesAndTransforms = List(
-        PredicateAndTransform(filteredCalls.nonEmpty, _.add("calls", Json.fromJsonObject(filteredCalls))),
-        PredicateAndTransform(filteredCalls.nonEmpty || filteredWorkflow.nonEmpty || forceWorkflowId, _.add("id", workflowObject("id").get))
+      val conditionalTransforms = List(
+        ConditionalTransform(
+          filteredCalls.nonEmpty,
+          _.add("calls", Json.fromJsonObject(filteredCalls))
+        ),
+        ConditionalTransform(
+          filteredCalls.nonEmpty || filteredWorkflow.nonEmpty || forceWorkflowId,
+          _.add("id", workflowObject("id").get)
+        )
       )
-
-      predicatesAndTransforms.foldLeft(filteredWorkflow) { case (w, pt) => if (pt.predicate) pt.transform(w) else w }
+      runConditionalTranforms(conditionalTransforms, filteredWorkflow)
     }
 
     import common.validation.ErrorOr._
