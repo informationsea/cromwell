@@ -220,6 +220,26 @@ class JsonEditorSpec extends FlatSpec with Matchers {
     actual shouldEqual expected
   }
 
+  it should "always return a workflow ID on the query workflow" ignore {
+    val expectedMetadata =
+      """
+        |{
+        |  "id" : "757d0bcc-b636-4658-99d4-9b4b3767f1d1"
+        |}
+        |""".stripMargin
+
+    val expected = parseString(expectedMetadata)
+    val actual = includeJson(helloWorldJson, NonEmptyList.of("foo"))
+    actual shouldEqual expected
+  }
+
+  it should "do the right thing with logs" ignore {
+    // this actually has no legit logs since it's calls a subworkflow, but we should at least get the workflow ID back.
+    val actual = logs(helloWorldJson).get
+    val expected = helloWorldJson
+    actual shouldEqual expected
+  }
+
   // CARBONITE FIXING a subworkflow version of this like the CarboniteMetadataThawingActorSpec would be nice.
   it should "add labels" in {
     val labels = Map(helloWorldJson.workflowId.get -> Map(("new", "label")))
