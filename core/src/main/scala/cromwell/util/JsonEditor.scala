@@ -17,7 +17,6 @@ object JsonEditor {
 
   private val subWorkflowMetadataKey = "subWorkflowMetadata"
   private val subWorkflowIdKey = "subWorkflowId"
-  private val keysToIncludeInCallsOrWorkflows = NonEmptyList.of("id", "shardIndex", "attempt")
 
   def includeExcludeJson(json: Json, includeKeys: Option[NonEmptyList[String]], excludeKeys: Option[NonEmptyList[String]]): ErrorOr[Json] =
     (includeKeys, excludeKeys) match {
@@ -180,7 +179,7 @@ object JsonEditor {
 
       def filterCallEntry(json: Json): ErrorOr[JsonObject] = {
         for {
-          callObject <- json.asObject.map(_.validNel).getOrElse("Call entry unexpectedly not an object: $json".invalidNel)
+          callObject <- json.asObject.map(_.validNel).getOrElse(s"Call entry unexpectedly not an object: $json".invalidNel)
           shallowFiltered = shallowFilter(callObject)
           subworkflow = callObject(subWorkflowMetadataKey).getOrElse(Json.fromJsonObject(JsonObject.empty))
           filteredSubworkflow <- applyIncludes(subworkflow)(filterGroup)
@@ -347,11 +346,10 @@ object JsonEditor {
   /**
     * Look for an optional JsonObject by its key
     * @param workflowJson - workflow Json to look in
-    * @param key - key to look for
     * @return - optional tuple of workflow JsonObject and found element JsonObject
     */
-  private def extractJsonObjectByKey(workflowJson: Json, key: String): Option[(JsonObject, JsonObject)] =
-    extractJsonByKey(workflowJson, key) flatMap {
+  private def extractCallsKeyValue(workflowJson: Json): Option[(JsonObject, JsonObject)] =
+    extractJsonByKey(workflowJson, "calls") flatMap {
       case (jsonObj, json) => json.asObject.flatMap(jo => Option((jsonObj, jo)))
     }
 
@@ -474,7 +472,7 @@ object JsonEditor {
   }
 
   private def updateWorkflowCallsJson(workflowJson: Json, updateCallsFunc: (JsonObject, Json) => Option[ErrorOr[Json]]): ErrorOr[Json] = {
-    val workflowWithUpdatedCalls: ErrorOr[Json] = extractJsonObjectByKey(workflowJson, "calls") match {
+    val workflowWithUpdatedCalls: ErrorOr[Json] = extractCallsKeyValue(workflowJson) match {
       // If there were no calls just return the workflow JSON unmodified.
       case None => workflowJson.validNel
       case Some((_, calls)) =>
@@ -507,7 +505,7 @@ object JsonEditor {
   }
 
   def extractSubWorkflowMetadata(subworkflowId: String, workflowJson: Json): ErrorOr[Option[Json]] = {
-    extractJsonObjectByKey(workflowJson, "calls") match {
+    extractCallsKeyValue(workflowJson) match {
       case None => None.validNel
       case Some((_, calls)) =>
         calls.toMap.map {

@@ -140,8 +140,7 @@ class JsonEditorSpec extends FlatSpec with Matchers {
     actual shouldEqual expected
   }
 
-  // CARBONITE FIXING Broken in the current Carbonite implementation, this recurses down inappropriately and finds a bogus 'labels' match.
-  it should "keep includes in workflows, tragically broken" ignore {
+  it should "keep includes in workflows, paying no mind to that 'labels' field in 'submittedFiles'" in {
     val actual = includeJson(helloWorldJson, NonEmptyList.of("workflowName", "labels", "outputs")).get
     val expectedMetadata = """
       |{
