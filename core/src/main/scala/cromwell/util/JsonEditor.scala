@@ -11,10 +11,7 @@ import common.util.StringUtil._
 import common.validation.ErrorOr._
 import common.validation.Validation._
 import cromwell.core.WorkflowId
-import io.circe.Json.Folder
-import io.circe.{Json, JsonNumber, JsonObject, Printer}
-
-import scala.collection.immutable
+import io.circe.{Json, JsonObject, Printer}
 
 object JsonEditor {
 
@@ -31,43 +28,43 @@ object JsonEditor {
       case _ => json.validNel
     }
 
-  def includeJson(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = {
-    val keysWithId = keysToIncludeInCallsOrWorkflows ::: keys
-    def folder: Folder[(Json, Boolean)] = new Folder[(Json, Boolean)] {
-      override def onNull: (Json, Boolean) = (Json.Null, false)
-      override def onBoolean(value: Boolean): (Json, Boolean) = (Json.fromBoolean(value), false)
-      override def onNumber(value: JsonNumber): (Json, Boolean) = (Json.fromJsonNumber(value), false)
-      override def onString(value: String): (Json, Boolean) = (Json.fromString(value), false)
-      override def onArray(value: Vector[Json]): (Json, Boolean) = {
-        val newArrayAndKeeps: immutable.Seq[(Json, Boolean)] = value.map(_.foldWith(folder))
-        val keep: Boolean = newArrayAndKeeps.map{ case (_, keep) => keep}.foldLeft(false)(_ || _)
-        (Json.fromValues(newArrayAndKeeps.map{ case (newJson, _) => newJson}), keep)
-      }
-
-      override def onObject(value: JsonObject): (Json, Boolean) = {
-        val modified: immutable.List[(String, Json)] = value.toList.flatMap{
-          case (key, value) =>
-            val keep = keysWithId.foldLeft(false)(_ || key.equals(_))
-            if (keep)
-              List[(String,Json)]((key,value))
-            else {
-              //run against children, if none of the children need it we can throw it away
-              val newJsonAndKeep: (Json, Boolean) = value.foldWith(folder)
-              val (newJson, keepChildren) = newJsonAndKeep
-              if (keepChildren)
-                List((key,newJson))
-              else
-                List.empty[(String,Json)]
-            }
-        }
-        val jsonObject = Json.fromJsonObject(JsonObject.fromIterable(modified))
-        val keep = modified.nonEmpty
-        (jsonObject, keep)
-      }
-    }
-    val (newJson,_) = json.foldWith(folder)
-    newJson.validNel
-  }
+//  def includeJson(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = {
+//    val keysWithId = keysToIncludeInCallsOrWorkflows ::: keys
+//    def folder: Folder[(Json, Boolean)] = new Folder[(Json, Boolean)] {
+//      override def onNull: (Json, Boolean) = (Json.Null, false)
+//      override def onBoolean(value: Boolean): (Json, Boolean) = (Json.fromBoolean(value), false)
+//      override def onNumber(value: JsonNumber): (Json, Boolean) = (Json.fromJsonNumber(value), false)
+//      override def onString(value: String): (Json, Boolean) = (Json.fromString(value), false)
+//      override def onArray(value: Vector[Json]): (Json, Boolean) = {
+//        val newArrayAndKeeps: immutable.Seq[(Json, Boolean)] = value.map(_.foldWith(folder))
+//        val keep: Boolean = newArrayAndKeeps.map{ case (_, keep) => keep}.foldLeft(false)(_ || _)
+//        (Json.fromValues(newArrayAndKeeps.map{ case (newJson, _) => newJson}), keep)
+//      }
+//
+//      override def onObject(value: JsonObject): (Json, Boolean) = {
+//        val modified: immutable.List[(String, Json)] = value.toList.flatMap{
+//          case (key, value) =>
+//            val keep = keysWithId.foldLeft(false)(_ || key.equals(_))
+//            if (keep)
+//              List[(String,Json)]((key,value))
+//            else {
+//              //run against children, if none of the children need it we can throw it away
+//              val newJsonAndKeep: (Json, Boolean) = value.foldWith(folder)
+//              val (newJson, keepChildren) = newJsonAndKeep
+//              if (keepChildren)
+//                List((key,newJson))
+//              else
+//                List.empty[(String,Json)]
+//            }
+//        }
+//        val jsonObject = Json.fromJsonObject(JsonObject.fromIterable(modified))
+//        val keep = modified.nonEmpty
+//        (jsonObject, keep)
+//      }
+//    }
+//    val (newJson,_) = json.foldWith(folder)
+//    newJson.validNel
+//  }
 
   final case class Filter(components: NonEmptyList[String])
 
@@ -153,7 +150,7 @@ object JsonEditor {
 
   def excludeJson(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = FilterGroup.build(keys) flatMap applyExcludes(json)
 
-  def includeJsonNouveau(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = FilterGroup.build(keys) flatMap applyIncludes(json)
+  def includeJson(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = FilterGroup.build(keys) flatMap applyIncludes(json)
 
   private def applyIncludes(workflowJson: Json)(filterGroup: FilterGroup): ErrorOr[Json] = {
     // Will return an empty JsonObject if there are no fields left in the workflow after filtering.
@@ -162,16 +159,42 @@ object JsonEditor {
         filterGroup.filters.exists(_.components.head == key)
       }
     }
+    // If the predicate returns true the transform will be applied to a JsonObject argument.
+    case class PredicateAndTransform(predicate: Boolean, transform: JsonObject => JsonObject)
 
-    // Will return an empty JsonObject if there are no calls in this workflow at all.
+    // Will return an empty JsonObject if all calls have been filtered out or if there were never any calls
+    // in this workflow.
     def filterCalls(workflowObject: JsonObject): ErrorOr[JsonObject] = {
-      def filterCallEntry(json: Json): ErrorOr[JsonObject] = ???
+      def buildCallObject(unfilteredCallObject: JsonObject, shallowFilteredCallObject: JsonObject, filteredSubworkflow: JsonObject): JsonObject = {
+        val predicateAndTransforms = List(
+          PredicateAndTransform(
+            shallowFilteredCallObject.nonEmpty || filteredSubworkflow.nonEmpty,
+            _.add("shardIndex", unfilteredCallObject("shardIndex").get).add("attempt", unfilteredCallObject("attempt").get)
+          ),
+          PredicateAndTransform(
+            filteredSubworkflow.nonEmpty,
+            _.add(subWorkflowMetadataKey, Json.fromJsonObject(filteredSubworkflow))
+          ))
+        predicateAndTransforms.foldLeft(shallowFilteredCallObject) { case (c, pt) => if (pt.predicate) pt.transform(c) else c }
+      }
+
+      def filterCallEntry(json: Json): ErrorOr[JsonObject] = {
+        for {
+          callObject <- json.asObject.map(_.validNel).getOrElse("Call entry unexpectedly not an object: $json".invalidNel)
+          shallowFiltered = shallowFilter(callObject)
+          subworkflow = callObject(subWorkflowMetadataKey).getOrElse(Json.fromJsonObject(JsonObject.empty))
+          filteredSubworkflow <- applyIncludes(subworkflow)(filterGroup)
+          filteredSubworkflowObject <- filteredSubworkflow.asObject.map(_.validNel).getOrElse(s"subworkflow unexpectedly not an object: $subworkflow ".invalidNel)
+          builtCallObject = buildCallObject(callObject, shallowFiltered, filteredSubworkflowObject)
+        } yield builtCallObject
+      }
 
       def filterCallsArray(json: Json): ErrorOr[Json] = {
         json.asArray match {
           case None => s"Calls array unexpectedly not an array: $json".invalidNel
           case Some(array) =>
             val filteredCalls: ErrorOr[Vector[JsonObject]] = array traverse filterCallEntry
+            // Remove empty call objects from the call array.
             val nonEmptyObjects: ErrorOr[Vector[JsonObject]] = filteredCalls map { _.filter(_.nonEmpty) }
             nonEmptyObjects map { objs => Json.fromValues(objs map Json.fromJsonObject) }
         }
@@ -180,13 +203,16 @@ object JsonEditor {
       val callsAsObject: ErrorOr[JsonObject] = workflowObject("calls") match {
         case None => JsonObject.empty.validNel
         case Some(cs) =>
-         cs.asObject map { _.validNel } getOrElse s"calls JSON unexpectedly not an array: $cs".invalidNel
+         cs.asObject map { _.validNel } getOrElse s"calls JSON unexpectedly not an object: $cs".invalidNel
       }
 
       for {
         callsObject <- callsAsObject
-        traversed <- callsObject traverse filterCallsArray
-      } yield traversed
+        // Empty calls filtered out of call arrays.
+        emptyCallsRemoved <- callsObject traverse filterCallsArray
+        // Empty call arrays removed from the containing calls object.
+        emptyCallArraysRemoved = emptyCallsRemoved filter { case (_, json) => json.asArray.exists(_.nonEmpty) }
+      } yield emptyCallArraysRemoved
     }
 
     def buildWorkflowObject(workflowObject: JsonObject,
@@ -194,14 +220,12 @@ object JsonEditor {
                             filteredWorkflow: JsonObject,
                             forceWorkflowId: Boolean = false): JsonObject = {
 
-      // If the predicate returns true the transform will be applied to a JsonObject argument.
-      case class PredicateAndTransform(predicate: () => Boolean, transform: JsonObject => JsonObject)
       val predicatesAndTransforms = List(
-        PredicateAndTransform(() => filteredCalls.nonEmpty, _.add("calls", Json.fromJsonObject(filteredCalls))),
-        PredicateAndTransform(() => filteredCalls.nonEmpty || filteredWorkflow.nonEmpty || forceWorkflowId, _.add("id", workflowObject("id").get))
+        PredicateAndTransform(filteredCalls.nonEmpty, _.add("calls", Json.fromJsonObject(filteredCalls))),
+        PredicateAndTransform(filteredCalls.nonEmpty || filteredWorkflow.nonEmpty || forceWorkflowId, _.add("id", workflowObject("id").get))
       )
 
-      predicatesAndTransforms.foldLeft(filteredWorkflow) { case (w, pt) => if (pt.predicate()) pt.transform(w) else w }
+      predicatesAndTransforms.foldLeft(filteredWorkflow) { case (w, pt) => if (pt.predicate) pt.transform(w) else w }
     }
 
     import common.validation.ErrorOr._
