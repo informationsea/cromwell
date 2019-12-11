@@ -220,7 +220,7 @@ class JsonEditorSpec extends FlatSpec with Matchers {
     actual shouldEqual expected
   }
 
-  it should "always return a workflow ID on the query workflow" ignore {
+  it should "always return a workflow ID on the query workflow" in {
     val expectedMetadata =
       """
         |{
@@ -229,14 +229,20 @@ class JsonEditorSpec extends FlatSpec with Matchers {
         |""".stripMargin
 
     val expected = parseString(expectedMetadata)
-    val actual = includeJson(helloWorldJson, NonEmptyList.of("foo"))
+    val actual = includeJson(helloWorldJson, NonEmptyList.of("foo")).toEither.right.get
     actual shouldEqual expected
   }
 
-  it should "do the right thing with logs" ignore {
-    // this actually has no legit logs since it's calls a subworkflow, but we should at least get the workflow ID back.
+  it should "do the right thing with logs" in {
+    // this actually has no legit logs since its one call is a subworkflow, but we should at least get the workflow ID back.
     val actual = logs(helloWorldJson).get
-    val expected = helloWorldJson
+    val expectedMetadata =
+      """
+        |{
+        |  "id" : "757d0bcc-b636-4658-99d4-9b4b3767f1d1"
+        |}
+        |""".stripMargin
+    val expected = parseString(expectedMetadata)
     actual shouldEqual expected
   }
 

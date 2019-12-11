@@ -111,9 +111,9 @@ object JsonEditor {
 
   def excludeJson(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = FilterGroup.build(keys) flatMap applyExcludes(json)
 
-  def includeJson(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = FilterGroup.build(keys) flatMap applyIncludes(json)
+  def includeJson(json: Json, keys: NonEmptyList[String]): ErrorOr[Json] = FilterGroup.build(keys) flatMap applyIncludes(json, forceWorkflowId = true)
 
-  private def applyIncludes(workflowJson: Json)(filterGroup: FilterGroup): ErrorOr[Json] = {
+  private def applyIncludes(workflowJson: Json, forceWorkflowId: Boolean = false)(filterGroup: FilterGroup): ErrorOr[Json] = {
     // Will return an empty JsonObject if there are no fields left in the workflow after filtering.
     def shallowFilter(jsonObject: JsonObject): JsonObject = {
       jsonObject filterKeys { key =>
@@ -185,7 +185,7 @@ object JsonEditor {
     def buildWorkflowObject(workflowObject: JsonObject,
                             filteredCalls: JsonObject,
                             filteredWorkflow: JsonObject,
-                            forceWorkflowId: Boolean = false): JsonObject = {
+                            forceWorkflowId: Boolean): JsonObject = {
 
       val conditionalTransforms = List(
         ConditionalTransform(
@@ -205,7 +205,7 @@ object JsonEditor {
       workflowObject <- workflowJson.asObject.map(_.validNel).getOrElse(s"Workflow JSON unexpectedly not an object: $workflowJson".invalidNel)
       filteredCalls <- filterCalls(workflowObject)
       filteredWorkflow = shallowFilter(workflowObject)
-      builtWorkflowObject = buildWorkflowObject(workflowObject, filteredCalls, filteredWorkflow)
+      builtWorkflowObject = buildWorkflowObject(workflowObject, filteredCalls, filteredWorkflow, forceWorkflowId)
     } yield Json.fromJsonObject(builtWorkflowObject)
   }
 
