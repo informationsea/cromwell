@@ -90,7 +90,10 @@ class CommandLineParser extends scopt.OptionParser[CommandLineArguments]("java -
       commonSubmissionArguments ++ List(
         opt[String]('h', "host").text("Cromwell server URL.").
           action((h, c) =>
-            c.copy(host = new URL(h)))
+            c.copy(host = new URL(h))),
+        opt[String]('s', "secret").text("Cromwell server secret.").
+          action((s, c) =>
+            c.copy(secret = Option(s)))
       ): _*
     )
 }
