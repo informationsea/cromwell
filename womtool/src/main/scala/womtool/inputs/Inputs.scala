@@ -16,7 +16,7 @@ object Inputs {
 
     WomGraphMaker.fromFiles(main, inputs = None) match {
       case Right(graphWithImports) =>
-        Try(graphWithImports.graph.externalInputNodes.toJson(inputNodeWriter(showOptionals)).prettyPrint) match {
+        Try(graphWithImports.graph.externalInputNodes.toJson(inputNodeWriter(showOptionals)).sortedPrint) match {
           case Success(json) => SuccessfulTermination(json + System.lineSeparator)
           case Failure(error) => UnsuccessfulTermination(error.getMessage)
         }
