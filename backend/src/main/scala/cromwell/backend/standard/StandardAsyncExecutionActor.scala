@@ -950,12 +950,9 @@ trait StandardAsyncExecutionActor
         failedRetryableOrNonRetryable match {
           case failed: FailedNonRetryableExecutionHandle if maxRetriesNotReachedYet =>
             val currentMemoryMultiplier = jobDescriptor.key.memoryMultiplier
-            (retryWithMoreMemory, memoryRetryFactor) match {
-              case (true, Some(multiplier)) =>
-                val newMultiplier = Refined.unsafeApply[Double, GreaterEqualOne](currentMemoryMultiplier.value * multiplier.value)
-                saveAttrsAndRetry(failed, kvsFromPreviousAttempt, kvsForNextAttempt, incFailedCount = true, Option(newMultiplier))
-              case (_, _) => saveAttrsAndRetry(failed, kvsFromPreviousAttempt, kvsForNextAttempt, incFailedCount = true)
-            }
+            val newMultiplier = Refined.unsafeApply[Double, GreaterEqualOne](currentMemoryMultiplier.value * 2)
+            saveAttrsAndRetry(failed, kvsFromPreviousAttempt, kvsForNextAttempt, incFailedCount = true, Option(newMultiplier))
+
           case failedNonRetryable: FailedNonRetryableExecutionHandle => Future.successful(failedNonRetryable)
           case failedRetryable: FailedRetryableExecutionHandle => saveAttrsAndRetry(failedRetryable, kvsFromPreviousAttempt, kvsForNextAttempt, incFailedCount = false)
         }
@@ -1175,6 +1172,11 @@ trait StandardAsyncExecutionActor
     */
   def handleExecutionResult(status: StandardAsyncRunState,
                             oldHandle: StandardAsyncPendingExecutionHandle): Future[ExecutionHandle] = {
+
+    val ste = Thread.currentThread.getStackTrace
+    log.info(s"handleExecutionResult  ${status}  ${oldHandle}")
+
+    ste.foreach(x => log.info(s"trace ${x}"))
 
     def memoryRetryRC: Future[Boolean] = {
       def returnCodeAsBoolean(codeAsOption: Option[String]): Boolean = {
