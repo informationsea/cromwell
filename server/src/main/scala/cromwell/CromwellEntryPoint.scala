@@ -5,7 +5,6 @@ import akka.actor.CoordinatedShutdown.JvmExitReason
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.http.javadsl.model.headers.HttpCredentials
 import akka.pattern.GracefulStopSupport
-import akka.stream.ActorMaterializer
 import cats.data.Validated._
 import cats.effect.IO
 import cats.syntax.apply._
@@ -77,7 +76,7 @@ object CromwellEntryPoint extends GracefulStopSupport {
       gracefulShutdown = gracefulShutdown,
       abortJobsOnTerminate = abortJobsOnTerminate.getOrElse(true),
       config = cromwellSystem.config
-    )(cromwellSystem.materializer)
+    )
 
     val runner = cromwellSystem.actorSystem.actorOf(runnerProps, "SingleWorkflowRunnerActor")
 
@@ -90,7 +89,6 @@ object CromwellEntryPoint extends GracefulStopSupport {
     lazy val Log = LoggerFactory.getLogger("cromwell-submit")
 
     implicit val actorSystem = ActorSystem("SubmitSystem")
-    implicit val materializer = ActorMaterializer()
     implicit val ec = actorSystem.dispatcher
     implicit val cs = IO.contextShift(ec)
 
@@ -178,7 +176,7 @@ object CromwellEntryPoint extends GracefulStopSupport {
     ConfigFactory.invalidateCaches()
 
     // Quiet warnings about missing sentry DSNs by just providing the default.
-    val dsn = Option(Lookup.lookup("dsn")).filterNot(Util.isNullOrEmpty).getOrElse(
+    val dsn = Option(Lookup.getDefault().get("dsn")).filterNot(Util.isNullOrEmpty).getOrElse(
       Dsn.DEFAULT_DSN + "&stacktrace.app.packages=quieted_with_any_value_because_empty_was_not_working")
     Sentry.init(dsn)
     ()
