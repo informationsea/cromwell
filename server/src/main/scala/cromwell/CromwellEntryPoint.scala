@@ -5,6 +5,7 @@ import akka.actor.CoordinatedShutdown.JvmExitReason
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.http.javadsl.model.headers.HttpCredentials
 import akka.pattern.GracefulStopSupport
+import akka.stream.ActorMaterializer
 import cats.data.Validated._
 import cats.effect.IO
 import cats.syntax.apply._
@@ -76,7 +77,7 @@ object CromwellEntryPoint extends GracefulStopSupport {
       gracefulShutdown = gracefulShutdown,
       abortJobsOnTerminate = abortJobsOnTerminate.getOrElse(true),
       config = cromwellSystem.config
-    )
+    )(cromwellSystem.materializer)
 
     val runner = cromwellSystem.actorSystem.actorOf(runnerProps, "SingleWorkflowRunnerActor")
 
@@ -89,6 +90,7 @@ object CromwellEntryPoint extends GracefulStopSupport {
     lazy val Log = LoggerFactory.getLogger("cromwell-submit")
 
     implicit val actorSystem = ActorSystem("SubmitSystem")
+    implicit val materializer = ActorMaterializer()
     implicit val ec = actorSystem.dispatcher
     implicit val cs = IO.contextShift(ec)
 
