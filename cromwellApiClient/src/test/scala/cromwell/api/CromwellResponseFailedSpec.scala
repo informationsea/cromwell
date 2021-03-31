@@ -5,6 +5,7 @@ import java.net.URL
 import akka.actor.ActorSystem
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.unmarshalling.Unmarshal
+import akka.stream.ActorMaterializer
 import akka.testkit._
 import cromwell.api.CromwellClient.UnsuccessfulRequestException
 import org.scalatest.BeforeAndAfterAll
@@ -14,12 +15,15 @@ import org.scalatest.matchers.should.Matchers
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 
-class CromwellResponseFailedSpec extends TestKit(ActorSystem()) with AsyncFlatSpecLike with Matchers with BeforeAndAfterAll {
+class CromwellResponseFailedSpec extends TestKit(ActorSystem("CromwellResponseFailedSpec"))
+  with AsyncFlatSpecLike with Matchers with BeforeAndAfterAll {
   override def afterAll(): Unit = {
     Await.ready(system.terminate(), 10.seconds.dilated)
     super.afterAll()
   }
-
+  
+  implicit val materializer: ActorMaterializer = ActorMaterializer()
+  
   "CromwellAPIClient" should "fail the Future if the HttpResponse is unsuccessful" in {
     val errorMessage =
       """|{

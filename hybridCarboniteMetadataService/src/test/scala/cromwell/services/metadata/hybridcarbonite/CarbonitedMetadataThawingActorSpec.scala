@@ -1,5 +1,6 @@
 package cromwell.services.metadata.hybridcarbonite
 
+import akka.stream.ActorMaterializer
 import akka.testkit.{TestActorRef, TestProbe}
 import cats.data.NonEmptyList
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
@@ -27,11 +28,11 @@ import scala.io.Source
 import scala.language.postfixOps
 
 
-class CarbonitedMetadataThawingActorSpec extends TestKitSuite("CarbonitedMetadataThawingActorSpec") with AnyFlatSpecLike with Matchers with TableDrivenPropertyChecks {
+class CarbonitedMetadataThawingActorSpec extends TestKitSuite with AnyFlatSpecLike with Matchers with TableDrivenPropertyChecks {
 
   implicit val ec: ExecutionContext = system.dispatcher
 
-  val carboniterConfig = HybridCarboniteConfig.parseConfig(ConfigFactory.parseString(
+  val carboniterConfig: HybridCarboniteConfig = HybridCarboniteConfig.parseConfig(ConfigFactory.parseString(
     """bucket = "carbonite-test-bucket"
       |filesystems {
       |  gcs {
@@ -40,12 +41,14 @@ class CarbonitedMetadataThawingActorSpec extends TestKitSuite("CarbonitedMetadat
       |  }
       |}""".stripMargin)).unsafe("Make config file")
 
-  val serviceRegistryActor = TestProbe()
-  val ioActor = TestProbe()
+  val serviceRegistryActor: TestProbe = TestProbe("serviceRegistryActor")
+  val ioActor: TestProbe = TestProbe("ioActor")
+
+  implicit val materializer: ActorMaterializer = ActorMaterializer()
 
   it should "receive a message from GCS" in {
 
-    val clientProbe = TestProbe()
+    val clientProbe = TestProbe("clientProbe")
     val actorUnderTest = TestActorRef(new CarbonitedMetadataThawingActor(carboniterConfig, serviceRegistryActor.ref, ioActor.ref) {
       override def getRootWorkflowId(workflowId: String)(implicit ec: ExecutionContext): Future[Option[String]] = Future.successful(Option(workflowId))
     }, "ThawingActor")
@@ -76,7 +79,7 @@ class CarbonitedMetadataThawingActorSpec extends TestKitSuite("CarbonitedMetadat
 
   it should "not include metadataSource field in response if includeKeys field is defined in request" in {
 
-    val clientProbe = TestProbe()
+    val clientProbe = TestProbe("clientProbe")
     val actorUnderTest = TestActorRef(new CarbonitedMetadataThawingActor(carboniterConfig, serviceRegistryActor.ref, ioActor.ref) {
       override def getRootWorkflowId(workflowId: String)(implicit ec: ExecutionContext): Future[Option[String]] = Future.successful(Option(workflowId))
     }, "ThawingActor")
@@ -134,7 +137,7 @@ class CarbonitedMetadataThawingActorSpec extends TestKitSuite("CarbonitedMetadat
         expandSubWorkflows = true
       ))
 
-    val clientProbe = TestProbe()
+    val clientProbe = TestProbe("clientProbe")
     val actorUnderTest = TestActorRef(new CarbonitedMetadataThawingActor(carboniterConfig, serviceRegistryActor.ref, ioActor.ref) {
       override def getRootWorkflowId(workflowId: String)(implicit ec: ExecutionContext): Future[Option[String]] = Future.successful(Option(rootWorkflowId.toString))
     }, "ThawingActor")
@@ -229,7 +232,7 @@ class CarbonitedMetadataThawingActorSpec extends TestKitSuite("CarbonitedMetadat
         expandSubWorkflows = true
       ))
 
-    val clientProbe = TestProbe()
+    val clientProbe = TestProbe("clientProbe")
     val actorUnderTest = TestActorRef(new CarbonitedMetadataThawingActor(carboniterConfig, serviceRegistryActor.ref, ioActor.ref) {
       override def getRootWorkflowId(workflowId: String)(implicit ec: ExecutionContext): Future[Option[String]] =
         Future.successful(if (workflowId == requestedSubworkflowId.toString) Some(rootWorkflowId.toString) else None)
@@ -292,17 +295,17 @@ class CarbonitedMetadataThawingActorSpec extends TestKitSuite("CarbonitedMetadat
 }
 
 object CarbonitedMetadataThawingActorSpec {
-  val workflowId = WorkflowId.fromString("2ce544a0-4c0d-4cc9-8a0b-b412bb1e5f82")
+  val workflowId: WorkflowId = WorkflowId.fromString("2ce544a0-4c0d-4cc9-8a0b-b412bb1e5f82")
 
-  val rawMetadataSample = sampleMetadataContent("", "")
-  val augmentedMetadataSampleWithLabelsWithoutMetadataSource = sampleMetadataContent(
+  val rawMetadataSample: String = sampleMetadataContent("", "")
+  val augmentedMetadataSampleWithLabelsWithoutMetadataSource: String = sampleMetadataContent(
     """
       |"labels" : {
       |    "bob loblaw" : "law blog"
       |},
       |  """.stripMargin,
     "")
-  val augmentedMetadataSampleWithLabelsAndMetadataSource = sampleMetadataContent(
+  val augmentedMetadataSampleWithLabelsAndMetadataSource: String = sampleMetadataContent(
     """
       |"labels" : {
       |    "bob loblaw" : "law blog"
@@ -311,7 +314,7 @@ object CarbonitedMetadataThawingActorSpec {
     """,
       |"metadataSource": "Archived"""".stripMargin)
 
-  val shortenedMetadataContent =
+  val shortenedMetadataContent: String =
     s"""
        |{
        |  "id" : "$workflowId",
@@ -319,7 +322,7 @@ object CarbonitedMetadataThawingActorSpec {
        |}
        |""".stripMargin
 
-  def sampleMetadataContent(labelsContent: String, metadataSource: String) = s"""{$labelsContent
+  def sampleMetadataContent(labelsContent: String, metadataSource: String): String = s"""{$labelsContent
                                                         |  "workflowName": "helloWorldWf",
                                                         |  "workflowProcessingEvents": [
                                                         |    {

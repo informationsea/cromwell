@@ -2,10 +2,10 @@ package cromwell.engine.workflow.lifecycle.execution.callcaching
 
 import akka.actor.{ActorRef, LoggingFSM, Props}
 import cats.data.NonEmptyList
-import cats.instances.list._
 import cats.syntax.apply._
 import cats.syntax.traverse._
 import cats.syntax.validated._
+import cats.instances.list._
 import common.exception.AggregatedMessageException
 import common.validation.ErrorOr._
 import common.validation.Validation._
@@ -163,8 +163,11 @@ object CallCacheDiffActor {
   def extractHashes(callCachingMetadataJson: JsObject): ErrorOr[Map[String, String]] = {
     def processField(keyPrefix: String)(fieldValue: (String, JsValue)): ErrorOr[Map[String, String]] = fieldValue match {
       case (key, hashString: JsString) => Map(keyPrefix + key -> hashString.value).validNel
-      case (key, subObject: JsObject) => extractHashEntries(key + ":", subObject)
-      case (key, otherValue) => s"Cannot extract hashes for $key. Expected JsString or JsObject but got ${otherValue.getClass.getSimpleName} $otherValue".invalidNel
+      case (key, subObject: JsObject) => extractHashEntries(s"$keyPrefix$key:", subObject)
+      case (key, jsArray: JsArray) =>
+        val subObjectElements = jsArray.elements.zipWithIndex.map { case (element, index) => (s"[$index]", element) }
+        extractHashEntries(keyPrefix + key, JsObject(subObjectElements: _*))
+      case (key, otherValue) => s"Cannot extract hashes for $key. Expected JsString, JsObject, or JsArray but got ${otherValue.getClass.getSimpleName} $otherValue".invalidNel
     }
 
     def extractHashEntries(keyPrefix: String, jsObject: JsObject): ErrorOr[Map[String, String]] = {
@@ -212,7 +215,7 @@ object CallCacheDiffActor {
     def fieldAsBoolean(field: String): ErrorOr[JsBoolean] = jsObject.getField(field) flatMap { _.mapToJsBoolean }
     def checkFieldValue(field: String, expectation: String): ErrorOr[Unit] = jsObject.getField(field) flatMap {
       case v: JsValue if v.toString == expectation => ().validNel
-      case other => s"Unexpected metadata field '$field'. Expected '$expectation' but got ${other.toString}".invalidNel
+      case other => s"Unexpected value '${other.toString}' for metadata field '$field', should have been '$expectation'".invalidNel
     }
 
     def validateNonEmptyResponse(): ErrorOr[Unit] = if (jsObject.fields.nonEmpty) { ().validNel } else {

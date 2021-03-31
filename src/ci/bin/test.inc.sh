@@ -62,12 +62,15 @@ cromwell::private::set_variable_if_only_some_files_changed() {
 cromwell::private::create_build_variables() {
     CROMWELL_BUILD_PROVIDER_TRAVIS="travis"
     CROMWELL_BUILD_PROVIDER_JENKINS="jenkins"
+    CROMWELL_BUILD_PROVIDER_CIRCLE="circle"
     CROMWELL_BUILD_PROVIDER_UNKNOWN="unknown"
 
     if [[ "${TRAVIS-false}" == "true" ]]; then
         CROMWELL_BUILD_PROVIDER="${CROMWELL_BUILD_PROVIDER_TRAVIS}"
     elif [[ "${JENKINS-false}" == "true" ]]; then
         CROMWELL_BUILD_PROVIDER="${CROMWELL_BUILD_PROVIDER_JENKINS}"
+    elif [[ "${CIRCLECI-false}" == "true" ]]; then
+        CROMWELL_BUILD_PROVIDER="${CROMWELL_BUILD_PROVIDER_CIRCLE}"
     else
         CROMWELL_BUILD_PROVIDER="${CROMWELL_BUILD_PROVIDER_UNKNOWN}"
     fi
@@ -97,6 +100,8 @@ cromwell::private::create_build_variables() {
     CROMWELL_BUILD_WAIT_FOR_IT_BRANCH="db049716e42767d39961e95dd9696103dca813f1"
     CROMWELL_BUILD_WAIT_FOR_IT_URL="https://raw.githubusercontent.com/vishnubob/wait-for-it/${CROMWELL_BUILD_WAIT_FOR_IT_BRANCH}/${CROMWELL_BUILD_WAIT_FOR_IT_FILENAME}"
     CROMWELL_BUILD_WAIT_FOR_IT_SCRIPT="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/${CROMWELL_BUILD_WAIT_FOR_IT_FILENAME}"
+    CROMWELL_BUILD_VAULT_ZIP="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/vault.zip"
+    CROMWELL_BUILD_VAULT_EXECUTABLE="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/vault"
     CROMWELL_BUILD_EXIT_FUNCTIONS="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/cromwell_build_exit_functions.$$"
 
     if [[ -n "${VIRTUAL_ENV:+set}" ]]; then
@@ -162,7 +167,7 @@ cromwell::private::create_build_variables() {
                 travis_commit_message="$(git log --reverse "${TRAVIS_COMMIT_RANGE}" | tail -n1 2>/dev/null || true)"
             fi
 
-            if [[ -z "${travis_commit_message:+set}" ]]; then
+            if [[ -z "${travis_commit_message:-}" ]]; then
                 travis_commit_message="$(git log --format=%B --max-count=1 HEAD 2>/dev/null || true)"
             fi
 
@@ -215,6 +220,76 @@ cromwell::private::create_build_variables() {
             CROMWELL_BUILD_GENERATE_COVERAGE=false
             CROMWELL_BUILD_RUN_TESTS=true
             ;;
+        "${CROMWELL_BUILD_PROVIDER_CIRCLE}")
+            CROMWELL_BUILD_IS_CI=true
+            CROMWELL_BUILD_TYPE="${BUILD_TYPE}"
+            CROMWELL_BUILD_NUMBER="${CIRCLE_BUILD_NUM}"
+            CROMWELL_BUILD_URL="${CIRCLE_BUILD_URL}"
+            CROMWELL_BUILD_GIT_USER_EMAIL="builds@circleci.com"
+            CROMWELL_BUILD_GIT_USER_NAME="CircleCI"
+            CROMWELL_BUILD_HEARTBEAT_PATTERN="…"
+            CROMWELL_BUILD_GENERATE_COVERAGE=true
+            CROMWELL_BUILD_BRANCH="${CIRCLE_BRANCH:-${CIRCLE_TAG}}"
+            CROMWELL_BUILD_TAG="${CIRCLE_TAG:-}"
+
+            local circle_github_repository
+            circle_github_repository="${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
+
+            if [[ "${circle_github_repository}" == "broadinstitute/cromwell" ]]; then
+                CROMWELL_BUILD_IS_SECURE=true
+            else
+                CROMWELL_BUILD_IS_SECURE=false
+            fi
+
+            CROMWELL_BUILD_EVENT="pull_request"
+
+            local circle_commit_message
+            local circle_force_tests
+            local circle_minimal_tests
+            if [[ -n "${CIRCLE_COMMIT_RANGE:+set}" ]]; then
+                # The commit message to analyze should be the last one in the commit range.
+                # This works for both pull_request and push builds, unlike using 'git log HEAD' which
+                # gives a merge commit message on pull requests.
+                circle_commit_message="$(git log --reverse "${CIRCLE_COMMIT_RANGE}" | tail -n1 2>/dev/null || true)"
+            fi
+
+            if [[ -z "${circle_commit_message:-}" ]]; then
+                circle_commit_message="$(git log --format=%B --max-count=1 HEAD 2>/dev/null || true)"
+            fi
+
+            if [[ "${circle_commit_message}" == *"[force ci]"* ]]; then
+                circle_force_tests=true
+                circle_minimal_tests=false
+            elif [[ "${circle_commit_message}" == *"[minimal ci]"* ]]; then
+                circle_force_tests=false
+                circle_minimal_tests=true
+            else
+                circle_force_tests=false
+                circle_minimal_tests=false
+            fi
+
+            echo "Building for commit message='${circle_commit_message}' with force=${circle_force_tests} and minimal=${circle_minimal_tests}"
+
+            # For solely documentation updates run only checkPublish. Otherwise always run sbt, even for 'push'.
+            # This allows quick sanity checks before starting PRs *and* publishing after merges into develop.
+            if [[ "${circle_force_tests}" == "true" ]]; then
+                CROMWELL_BUILD_RUN_TESTS=true
+            elif [[ "${CROMWELL_BUILD_ONLY_DOCS_CHANGED}" == "true" ]] && \
+                [[ "${BUILD_TYPE}" != "checkPublish" ]]; then
+                CROMWELL_BUILD_RUN_TESTS=false
+            elif [[ "${circle_minimal_tests}" == "true" ]] && \
+                [[ "${CROMWELL_BUILD_EVENT}" != "push" ]]; then
+                CROMWELL_BUILD_RUN_TESTS=false
+            elif [[ "${CROMWELL_BUILD_ONLY_SCRIPTS_CHANGED}" == "true" ]] && \
+                [[ "${BUILD_TYPE}" != "metadataComparisonPython" ]]; then
+                CROMWELL_BUILD_RUN_TESTS=false
+            elif [[ "${CROMWELL_BUILD_EVENT}" == "push" ]] && \
+                [[ "${BUILD_TYPE}" != "sbt" ]]; then
+                CROMWELL_BUILD_RUN_TESTS=false
+            else
+                CROMWELL_BUILD_RUN_TESTS=true
+            fi
+            ;;
         *)
             CROMWELL_BUILD_IS_CI=false
             CROMWELL_BUILD_IS_SECURE=true
@@ -227,7 +302,7 @@ cromwell::private::create_build_variables() {
             CROMWELL_BUILD_GIT_USER_EMAIL="unknown.git.user@example.org"
             CROMWELL_BUILD_GIT_USER_NAME="Unknown Git User"
             CROMWELL_BUILD_HEARTBEAT_PATTERN="…"
-            CROMWELL_BUILD_GENERATE_COVERAGE=true
+            CROMWELL_BUILD_GENERATE_COVERAGE="${CROMWELL_BUILD_GENERATE_COVERAGE:-true}"
             CROMWELL_BUILD_RUN_TESTS=true
 
             local bash_script
@@ -262,13 +337,13 @@ cromwell::private::create_build_variables() {
         CROMWELL_BUILD_SBT_ASSEMBLY_COMMAND="assembly"
     fi
 
+    if [[ "${CROMWELL_BUILD_GENERATE_COVERAGE}" == "true" ]]; then
+        CROMWELL_BUILD_SBT_COVERAGE_COMMAND="coverage"
+    else
+        CROMWELL_BUILD_SBT_COVERAGE_COMMAND=""
+    fi
+
     case "${CROMWELL_BUILD_TYPE}" in
-        centaurPapiUpgradePapiV1*)
-            CROMWELL_BUILD_CROMWELL_CONFIG="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/papi_v1_v2alpha1_upgrade_application.conf"
-            ;;
-        centaurPapiUpgradeNewWorkflowsPapiV1*)
-            CROMWELL_BUILD_CROMWELL_CONFIG="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/papi_v1_v2alpha1_upgrade_application.conf"
-            ;;
         centaurPapiUpgradePapiV2alpha1*)
             CROMWELL_BUILD_CROMWELL_CONFIG="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/papi_v2alpha1_v2beta_upgrade_application.conf"
             ;;
@@ -300,11 +375,8 @@ cromwell::private::create_build_variables() {
     CROMWELL_BUILD_DOCKER_TAG="${CROMWELL_BUILD_DOCKER_TAG:0:128}"
     CROMWELL_BUILD_DOCKER_TAG="${CROMWELL_BUILD_DOCKER_TAG//[^a-zA-Z0-9.-]/_}"
 
-    CROMWELL_BUILD_OPTIONAL_SECURE="${CROMWELL_BUILD_OPTIONAL_SECURE-false}"
     CROMWELL_BUILD_REQUIRES_SECURE="${CROMWELL_BUILD_REQUIRES_SECURE-false}"
     CROMWELL_BUILD_REQUIRES_PRIOR_VERSION="${CROMWELL_BUILD_REQUIRES_PRIOR_VERSION-false}"
-    CROMWELL_BUILD_SBT_ASSEMBLY_COMMAND="${CROMWELL_BUILD_SBT_ASSEMBLY_COMMAND-assembly}"
-    VAULT_TOKEN="${VAULT_TOKEN-vault token is not set as an environment variable}"
 
     local hours_to_minutes
     hours_to_minutes=60
@@ -335,7 +407,6 @@ cromwell::private::create_build_variables() {
     export CROMWELL_BUILD_IS_VIRTUAL_ENV
     export CROMWELL_BUILD_LOG_DIRECTORY
     export CROMWELL_BUILD_NUMBER
-    export CROMWELL_BUILD_OPTIONAL_SECURE
     export CROMWELL_BUILD_OS
     export CROMWELL_BUILD_OS_DARWIN
     export CROMWELL_BUILD_OS_LINUX
@@ -343,6 +414,7 @@ cromwell::private::create_build_variables() {
     export CROMWELL_BUILD_PROVIDER
     export CROMWELL_BUILD_PROVIDER_JENKINS
     export CROMWELL_BUILD_PROVIDER_TRAVIS
+    export CROMWELL_BUILD_PROVIDER_CIRCLE
     export CROMWELL_BUILD_PROVIDER_UNKNOWN
     export CROMWELL_BUILD_REQUIRES_SECURE
     export CROMWELL_BUILD_REQUIRES_PRIOR_VERSION
@@ -351,10 +423,13 @@ cromwell::private::create_build_variables() {
     export CROMWELL_BUILD_ROOT_DIRECTORY
     export CROMWELL_BUILD_RUN_TESTS
     export CROMWELL_BUILD_SBT_ASSEMBLY_COMMAND
+    export CROMWELL_BUILD_SBT_COVERAGE_COMMAND
     export CROMWELL_BUILD_SCRIPTS_DIRECTORY
     export CROMWELL_BUILD_TAG
     export CROMWELL_BUILD_TYPE
     export CROMWELL_BUILD_URL
+    export CROMWELL_BUILD_VAULT_EXECUTABLE
+    export CROMWELL_BUILD_VAULT_ZIP
     export CROMWELL_BUILD_WAIT_FOR_IT_BRANCH
     export CROMWELL_BUILD_WAIT_FOR_IT_FILENAME
     export CROMWELL_BUILD_WAIT_FOR_IT_SCRIPT
@@ -365,7 +440,6 @@ cromwell::private::echo_build_variables() {
     echo "CROMWELL_BUILD_IS_CI='${CROMWELL_BUILD_IS_CI}'"
     echo "CROMWELL_BUILD_IS_SECURE='${CROMWELL_BUILD_IS_SECURE}'"
     echo "CROMWELL_BUILD_REQUIRES_SECURE='${CROMWELL_BUILD_REQUIRES_SECURE}'"
-    echo "CROMWELL_BUILD_OPTIONAL_SECURE='${CROMWELL_BUILD_OPTIONAL_SECURE}'"
     echo "CROMWELL_BUILD_TYPE='${CROMWELL_BUILD_TYPE}'"
     echo "CROMWELL_BUILD_BRANCH='${CROMWELL_BUILD_BRANCH}'"
     echo "CROMWELL_BUILD_IS_HOTFIX='${CROMWELL_BUILD_IS_HOTFIX}'"
@@ -386,7 +460,8 @@ cromwell::private::create_database_variables() {
     CROMWELL_BUILD_DATABASE_SCHEMA="cromwell_test"
 
     case "${CROMWELL_BUILD_PROVIDER}" in
-        "${CROMWELL_BUILD_PROVIDER_TRAVIS}")
+        "${CROMWELL_BUILD_PROVIDER_TRAVIS}"|\
+        "${CROMWELL_BUILD_PROVIDER_CIRCLE}")
             CROMWELL_BUILD_MARIADB_HOSTNAME="localhost"
             CROMWELL_BUILD_MARIADB_PORT="23306"
             CROMWELL_BUILD_MARIADB_DOCKER_TAG="${BUILD_MARIADB-}"
@@ -516,15 +591,7 @@ cromwell::private::create_centaur_variables() {
         "${CROMWELL_BUILD_CENTAUR_TYPE_HORICROMTAL}")
             # Use the standard test cases despite the horicromtal Centaur build type.
             CROMWELL_BUILD_CENTAUR_TEST_DIRECTORY="${CROMWELL_BUILD_CENTAUR_RESOURCES}/standardTestCases"
-
-            # Determine horicromtal Centaur config:
-            if test "${CROMWELL_BUILD_BACKEND_TYPE}" = "papi_v2alpha1" || test "${CROMWELL_BUILD_BACKEND_TYPE}" = "papi_v2beta"
-            then
-              CROMWELL_BUILD_CENTAUR_CONFIG="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/centaur_application_papi_v2_horicromtal.conf"
-            else
-              CROMWELL_BUILD_CENTAUR_CONFIG="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/centaur_application_horicromtal.conf"
-            fi
-            echo "*** Using centaur config '${CROMWELL_BUILD_CENTAUR_CONFIG}' for backend type '${CROMWELL_BUILD_BACKEND_TYPE}'"
+            CROMWELL_BUILD_CENTAUR_CONFIG="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/centaur_application_horicromtal.conf"
             ;;
         "${CROMWELL_BUILD_CENTAUR_TYPE_HORICROMTAL_ENGINE_UPGRADE}")
             # Use the engine upgrade test cases despite the horicromtal Centaur build type.
@@ -534,12 +601,7 @@ cromwell::private::create_centaur_variables() {
             ;;
         *)
             CROMWELL_BUILD_CENTAUR_TEST_DIRECTORY="${CROMWELL_BUILD_CENTAUR_RESOURCES}/${CROMWELL_BUILD_CENTAUR_TYPE}TestCases"
-            if test "${CROMWELL_BUILD_BACKEND_TYPE}" = "papi_v2alpha1" || test "${CROMWELL_BUILD_BACKEND_TYPE}" = "papi_v2beta"
-            then
-              CROMWELL_BUILD_CENTAUR_CONFIG="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/centaur_application_papi_v2.conf"
-            else
-              CROMWELL_BUILD_CENTAUR_CONFIG="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/centaur_application.conf"
-            fi
+            CROMWELL_BUILD_CENTAUR_CONFIG="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/centaur_application.conf"
             ;;
     esac
 
@@ -555,7 +617,8 @@ cromwell::private::create_centaur_variables() {
 
     # Pick **one** of the databases to run Centaur against
     case "${CROMWELL_BUILD_PROVIDER}" in
-        "${CROMWELL_BUILD_PROVIDER_TRAVIS}")
+        "${CROMWELL_BUILD_PROVIDER_TRAVIS}"|\
+        "${CROMWELL_BUILD_PROVIDER_CIRCLE}")
 
             if [[ -n "${CROMWELL_BUILD_MYSQL_DOCKER_TAG:+set}" ]]; then
                 CROMWELL_BUILD_CENTAUR_SLICK_PROFILE="slick.jdbc.MySQLProfile$"
@@ -597,9 +660,11 @@ cromwell::private::create_centaur_variables() {
     case "${CROMWELL_BUILD_CENTAUR_TYPE}" in
         "${CROMWELL_BUILD_CENTAUR_TYPE_INTEGRATION}")
             CROMWELL_BUILD_CENTAUR_READ_LINES_LIMIT=512000
+            CROMWELL_BUILD_CENTAUR_MAX_WORKFLOW_LENGTH="10 hours"
             ;;
         *)
             CROMWELL_BUILD_CENTAUR_READ_LINES_LIMIT=128000
+            CROMWELL_BUILD_CENTAUR_MAX_WORKFLOW_LENGTH="90 minutes"
             ;;
     esac
 
@@ -621,22 +686,23 @@ cromwell::private::create_centaur_variables() {
 
     export CROMWELL_BUILD_CENTAUR_256_BITS_KEY
     export CROMWELL_BUILD_CENTAUR_CONFIG
-    export CROMWELL_BUILD_DOCKER_TAG
     export CROMWELL_BUILD_CENTAUR_JDBC_DRIVER
     export CROMWELL_BUILD_CENTAUR_JDBC_URL
     export CROMWELL_BUILD_CENTAUR_LOG
-    export CROMWELL_BUILD_CENTAUR_TEST_ADDITIONAL_PARAMETERS
-    export CROMWELL_BUILD_CENTAUR_TEST_DIRECTORY
+    export CROMWELL_BUILD_CENTAUR_MAX_WORKFLOW_LENGTH
+    export CROMWELL_BUILD_CENTAUR_PRIOR_JDBC_DRIVER
+    export CROMWELL_BUILD_CENTAUR_PRIOR_JDBC_URL
+    export CROMWELL_BUILD_CENTAUR_PRIOR_SLICK_PROFILE
     export CROMWELL_BUILD_CENTAUR_READ_LINES_LIMIT
     export CROMWELL_BUILD_CENTAUR_RESOURCES
     export CROMWELL_BUILD_CENTAUR_SLICK_PROFILE
+    export CROMWELL_BUILD_CENTAUR_TEST_ADDITIONAL_PARAMETERS
+    export CROMWELL_BUILD_CENTAUR_TEST_DIRECTORY
     export CROMWELL_BUILD_CENTAUR_TYPE
-    export CROMWELL_BUILD_CENTAUR_TYPE_STANDARD
-    export CROMWELL_BUILD_CENTAUR_TYPE_INTEGRATION
     export CROMWELL_BUILD_CENTAUR_TYPE_ENGINE_UPGRADE
-    export CROMWELL_BUILD_CENTAUR_PRIOR_SLICK_PROFILE
-    export CROMWELL_BUILD_CENTAUR_PRIOR_JDBC_DRIVER
-    export CROMWELL_BUILD_CENTAUR_PRIOR_JDBC_URL
+    export CROMWELL_BUILD_CENTAUR_TYPE_INTEGRATION
+    export CROMWELL_BUILD_CENTAUR_TYPE_STANDARD
+    export CROMWELL_BUILD_DOCKER_TAG
 }
 
 cromwell::private::create_conformance_variables() {
@@ -728,7 +794,11 @@ cromwell::private::pip_install() {
     pip_package="${1:?pip_install called without a package}"; shift
 
     if [[ "${CROMWELL_BUILD_IS_CI}" == "true" ]]; then
-        sudo -H "${PYTHON3_HOME}/bin/pip" install "${pip_package}" "$@"
+        if [[ "${CROMWELL_BUILD_PROVIDER}" == "${CROMWELL_BUILD_PROVIDER_CIRCLE}" ]]; then
+            pip3 install "${pip_package}" "$@"
+        else
+            sudo -H "${PYTHON3_HOME}/bin/pip" install "${pip_package}" "$@"
+        fi
     elif [[ "${CROMWELL_BUILD_IS_VIRTUAL_ENV}" == "true" ]]; then
         pip install "${pip_package}" "$@"
     else
@@ -744,6 +814,14 @@ cromwell::private::upgrade_pip() {
 cromwell::private::install_wait_for_it() {
     curl -s "${CROMWELL_BUILD_WAIT_FOR_IT_URL}" > "$CROMWELL_BUILD_WAIT_FOR_IT_SCRIPT"
     chmod +x "$CROMWELL_BUILD_WAIT_FOR_IT_SCRIPT"
+}
+
+cromwell::private::install_vault() {
+    curl \
+        --location --fail --silent --show-error \
+        --output "${CROMWELL_BUILD_VAULT_ZIP}" \
+        "https://releases.hashicorp.com/vault/1.6.3/vault_1.6.3_${CROMWELL_BUILD_OS}_amd64.zip"
+    unzip "${CROMWELL_BUILD_VAULT_ZIP}" -d "$(dirname "${CROMWELL_BUILD_VAULT_EXECUTABLE}")"
 }
 
 cromwell::private::install_git_secrets() {
@@ -873,14 +951,6 @@ cromwell::private::start_docker_databases() {
     fi
 }
 
-cromwell::private::pull_common_docker_images() {
-    # All tests use ubuntu:latest - make sure it's there before starting the tests
-    # because pulling the image during some of the tests would cause them to fail
-    # (specifically output_redirection which expects a specific value in stderr)
-    # Use cat to quiet docker: https://github.com/moby/moby/issues/36655#issuecomment-375136087
-    docker pull ubuntu | cat
-}
-
 cromwell::private::install_cwltest() {
     # TODO: No clue why these are needed for cwltool. If you know please update this comment.
     sudo apt-get install procps || true
@@ -914,39 +984,59 @@ cromwell::private::write_cwl_test_inputs() {
 JSON
 }
 
-cromwell::private::docker_login() {
+cromwell::private::vault_run() {
     if cromwell::private::is_xtrace_enabled; then
-        cromwell::private::exec_silent_function cromwell::private::docker_login
+        cromwell::private::exec_silent_function cromwell::private::vault_run "$@"
     else
-        local dockerhub_auth_include
-        dockerhub_auth_include="${CROMWELL_BUILD_RESOURCES_DIRECTORY}/dockerhub_auth.inc.sh"
-        if [[ -f "${dockerhub_auth_include}" ]]; then
-            # shellcheck source=/dev/null
-            source "${dockerhub_auth_include}"
+        # Run a vault executable that is NOT hosted inside of a docker.io image.
+        # For those committers with vault access this avoids pull rate limits reported in BT-143.
+        VAULT_ADDR=https://clotho.broadinstitute.org:8200 "${CROMWELL_BUILD_VAULT_EXECUTABLE}" "$@"
+    fi
+}
+
+cromwell::private::login_vault() {
+    if cromwell::private::is_xtrace_enabled; then
+        cromwell::private::exec_silent_function cromwell::private::login_vault
+    else
+        local vault_token
+
+        # shellcheck disable=SC2153
+        if [[ -n "${VAULT_ROLE_ID:+set}" ]] && [[ -n "${VAULT_SECRET_ID:+set}" ]]; then
+            vault_token="$(
+                cromwell::private::vault_run \
+                    write -field=token \
+                    auth/approle/login role_id="${VAULT_ROLE_ID}" secret_id="${VAULT_SECRET_ID}"
+            )"
+        else
+            vault_token="${VAULT_TOKEN:-}"
+        fi
+
+        if [[ -n "${vault_token}" ]]; then
+            # Don't fail here if vault login fails
+            # shellcheck disable=SC2015
+            cromwell::private::vault_run \
+                login "${vault_token}" < /dev/null > /dev/null \
+                && echo vault login success \
+                || true
         fi
     fi
 }
 
-cromwell::private::vault_login() {
+cromwell::private::login_docker() {
     if cromwell::private::is_xtrace_enabled; then
-        cromwell::private::exec_silent_function cromwell::private::vault_login
-    elif [[ "${CROMWELL_BUILD_IS_SECURE}" == "true" ]]; then
-        case "${CROMWELL_BUILD_PROVIDER}" in
-            "${CROMWELL_BUILD_PROVIDER_TRAVIS}")
-                # Login to vault to access secrets
-                local vault_token
-                vault_token="${VAULT_TOKEN}"
-                # Don't fail here if vault login fails
-                # shellcheck disable=SC2015
-                docker run --rm \
-                    -v "${CROMWELL_BUILD_HOME_DIRECTORY}:/root:rw" \
-                    broadinstitute/dsde-toolbox:dev \
-                    vault auth "${vault_token}" < /dev/null > /dev/null && echo vault auth success \
-                || true
-                ;;
-            *)
-                ;;
-        esac
+        cromwell::private::exec_silent_function cromwell::private::login_docker
+    else
+        local docker_username
+        local docker_password
+
+        # Do not fail if docker login fails. We'll try to pull images anonymously.
+        docker_username="$(
+            cromwell::private::vault_run read -field=username secret/dsde/cromwell/common/cromwell-dockerhub || true
+        )"
+        docker_password="$(
+            cromwell::private::vault_run read -field=password secret/dsde/cromwell/common/cromwell-dockerhub || true
+        )"
+        docker login --username "${docker_username}" --password-stdin <<< "${docker_password}" || true
     fi
 }
 
@@ -975,23 +1065,24 @@ cromwell::private::copy_all_resources() {
 }
 
 cromwell::private::setup_secure_resources() {
-    if [[ "${CROMWELL_BUILD_REQUIRES_SECURE}" == "true" ]] || [[ "${CROMWELL_BUILD_OPTIONAL_SECURE}" == "true" ]]; then
-        case "${CROMWELL_BUILD_PROVIDER}" in
-            "${CROMWELL_BUILD_PROVIDER_TRAVIS}")
-                cromwell::private::vault_login
-                cromwell::private::render_secure_resources
-                cromwell::private::docker_login
-                ;;
-            "${CROMWELL_BUILD_PROVIDER_JENKINS}")
-                cromwell::private::copy_all_resources
-                ;;
-            *)
-                cromwell::private::render_secure_resources
-                ;;
-        esac
-    else
-        cromwell::private::copy_all_resources
-    fi
+    case "${CROMWELL_BUILD_PROVIDER}" in
+        "${CROMWELL_BUILD_PROVIDER_TRAVIS}"|\
+        "${CROMWELL_BUILD_PROVIDER_CIRCLE}")
+            # Try to login to vault, and if successful then use vault creds to login to docker.
+            # For those committers with vault access this avoids pull rate limits reported in BT-143.
+            cromwell::private::install_vault
+            cromwell::private::login_vault
+            cromwell::private::login_docker
+            cromwell::private::render_secure_resources
+            ;;
+        "${CROMWELL_BUILD_PROVIDER_JENKINS}")
+            # Jenkins secret resources should have already been rendered outside the CI's docker-compose container.
+            cromwell::private::copy_all_resources
+            ;;
+        *)
+            cromwell::private::render_secure_resources
+            ;;
+    esac
 }
 
 cromwell::private::make_build_directories() {
@@ -1020,7 +1111,12 @@ cromwell::private::assemble_jars() {
     # CROMWELL_BUILD_SBT_ASSEMBLY_COMMAND allows for an override of the default `assembly` command for assembly.
     # This can be useful to reduce time and memory that might otherwise be spent assembling unused subprojects.
     # shellcheck disable=SC2086
-    CROMWELL_SBT_ASSEMBLY_LOG_LEVEL=error sbt --warn coverage ${CROMWELL_BUILD_SBT_ASSEMBLY_COMMAND} -error
+    CROMWELL_SBT_ASSEMBLY_LOG_LEVEL=error \
+        sbt \
+        --warn \
+        ${CROMWELL_BUILD_SBT_COVERAGE_COMMAND} \
+        ${CROMWELL_BUILD_SBT_ASSEMBLY_COMMAND} \
+        -error
 }
 
 cromwell::private::setup_prior_version_resources() {
@@ -1259,13 +1355,12 @@ cromwell::build::setup_common_environment() {
     cromwell::private::check_debug
     cromwell::private::create_build_variables
     cromwell::private::echo_build_variables
-    cromwell::private::create_database_variables
     cromwell::private::verify_secure_build
     cromwell::private::make_build_directories
     cromwell::private::install_git_secrets
     cromwell::private::install_minnie_kenny
     cromwell::private::install_wait_for_it
-    cromwell::private::setup_secure_resources
+    cromwell::private::create_database_variables
 
     case "${CROMWELL_BUILD_PROVIDER}" in
         "${CROMWELL_BUILD_PROVIDER_TRAVIS}")
@@ -1273,22 +1368,23 @@ cromwell::build::setup_common_environment() {
             cromwell::private::delete_boto_config
             cromwell::private::delete_sbt_boot
             cromwell::private::upgrade_pip
-            cromwell::private::pull_common_docker_images
             cromwell::private::start_docker_databases
             ;;
-        "${CROMWELL_BUILD_PROVIDER_JENKINS}")
-            cromwell::private::delete_boto_config
-            cromwell::private::delete_sbt_boot
+        "${CROMWELL_BUILD_PROVIDER_CIRCLE}")
+            cromwell::private::start_docker_databases
             ;;
+        "${CROMWELL_BUILD_PROVIDER_JENKINS}"|\
         *)
-            cromwell::private::pull_common_docker_images
             ;;
     esac
+
+    cromwell::private::setup_secure_resources
+    cromwell::private::start_build_heartbeat
 }
+
 
 cromwell::build::setup_centaur_environment() {
     cromwell::private::create_centaur_variables
-    cromwell::private::start_build_heartbeat
     cromwell::private::start_cromwell_log_tail
     cromwell::private::start_centaur_log_tail
     if [[ "${CROMWELL_BUILD_IS_CI}" == "true" ]]; then
@@ -1304,13 +1400,10 @@ cromwell::build::setup_conformance_environment() {
     fi
     cromwell::private::checkout_pinned_cwl
     cromwell::private::write_cwl_test_inputs
-    cromwell::private::start_build_heartbeat
     cromwell::private::add_exit_function cromwell::private::cat_conformance_log
 }
 
 cromwell::build::setup_docker_environment() {
-    cromwell::private::start_build_heartbeat
-
     if [[ "${CROMWELL_BUILD_PROVIDER}" == "${CROMWELL_BUILD_PROVIDER_TRAVIS}" ]]; then
         # Upgrade docker-compose so that we get the correct exit codes
         docker-compose -version
@@ -1364,6 +1457,17 @@ cromwell::build::build_cromwell_docker() {
     cromwell::build::build_docker_image server broadinstitute/cromwell:"${CROMWELL_BUILD_DOCKER_TAG}"
 }
 
+cromwell:build::run_sbt_test() {
+    # CROMWELL_BUILD_SBT_COVERAGE_COMMAND allows enabling or disabling `sbt coverage`.
+    # shellcheck disable=SC2086
+    sbt \
+        -warn \
+        -Dakka.test.timefactor=${CROMWELL_BUILD_UNIT_SPAN_SCALE_FACTOR} \
+        -Dbackend.providers.Local.config.filesystems.local.localization.0=copy \
+        ${CROMWELL_BUILD_SBT_COVERAGE_COMMAND} \
+        test
+}
+
 cromwell::build::run_centaur() {
     local -a additional_args
     additional_args=()
@@ -1373,12 +1477,14 @@ cromwell::build::run_centaur() {
         # shellcheck disable=SC2206
         additional_args=(${CROMWELL_BUILD_CENTAUR_TEST_ADDITIONAL_PARAMETERS})
     fi
+    if [[ "${CROMWELL_BUILD_GENERATE_COVERAGE}" == "true" ]]; then
+        additional_args+=("-g")
+    fi
     # Handle empty arrays in older versions of bash
     # https://stackoverflow.com/questions/7577052/bash-empty-array-expansion-with-set-u#answer-7577209
     "${CROMWELL_BUILD_ROOT_DIRECTORY}/centaur/test_cromwell.sh" \
         -n "${CROMWELL_BUILD_CENTAUR_CONFIG}" \
         -l "${CROMWELL_BUILD_LOG_DIRECTORY}" \
-        -g \
         ${additional_args[@]+"${additional_args[@]}"} \
         "$@"
 }
@@ -1459,10 +1565,6 @@ cromwell::build::exec_silent_function() {
 
 cromwell::build::pip_install() {
     cromwell::private::pip_install "$@"
-}
-
-cromwell::build::start_build_heartbeat() {
-    cromwell::private::start_build_heartbeat
 }
 
 cromwell::build::add_exit_function() {

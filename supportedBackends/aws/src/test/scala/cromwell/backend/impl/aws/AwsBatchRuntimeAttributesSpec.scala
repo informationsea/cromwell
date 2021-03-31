@@ -32,6 +32,7 @@
 package cromwell.backend.impl.aws
 
 import cats.data.NonEmptyList
+import common.assertion.CromwellTimeoutSpec
 import cromwell.backend.RuntimeAttributeDefinition
 import cromwell.backend.impl.aws.io.{AwsBatchVolume, AwsBatchWorkingDisk}
 import cromwell.backend.validation.{ContinueOnReturnCodeFlag, ContinueOnReturnCodeSet}
@@ -48,7 +49,7 @@ import wom.format.MemorySize
 import wom.types._
 import wom.values._
 
-class AwsBatchRuntimeAttributesSpec extends AnyWordSpecLike with Matchers with Mockito {
+class AwsBatchRuntimeAttributesSpec extends AnyWordSpecLike with CromwellTimeoutSpec with Matchers with Mockito {
 
   def workflowOptionsWithDefaultRA(defaults: Map[String, JsValue]): WorkflowOptions = {
     WorkflowOptions(JsObject(Map(
@@ -65,6 +66,17 @@ class AwsBatchRuntimeAttributesSpec extends AnyWordSpecLike with Matchers with M
     ContinueOnReturnCodeSet(Set(0)),
     false,
     "my-stuff")
+
+  val expectedDefaultsLocalFS = new AwsBatchRuntimeAttributes(refineMV[Positive](1), Vector("us-east-1a", "us-east-1b"),
+
+    MemorySize(2, MemoryUnit.GB), Vector(AwsBatchWorkingDisk()),
+    "ubuntu:latest",
+    "arn:aws:batch:us-east-1:111222333444:job-queue/job-queue",
+    false,
+    ContinueOnReturnCodeSet(Set(0)),
+    false,
+    "",
+    "local")
 
   "AwsBatchRuntimeAttributes" should {
 
@@ -164,6 +176,17 @@ class AwsBatchRuntimeAttributesSpec extends AnyWordSpecLike with Matchers with M
       val runtimeAttributes = Map("docker" -> WomString("ubuntu:latest"), "scriptBucketName" -> WomString("my-stuff"), "cpu" -> WomString("2"))
       val expectedRuntimeAttributes = expectedDefaults.copy(cpu = refineMV[Positive](2))
       assertAwsBatchRuntimeAttributesSuccessfulCreation(runtimeAttributes, expectedRuntimeAttributes)
+    }
+    "validate a valid Filesystem string entry S3" in {
+      val runtimeAttributes = Map("docker" -> WomString("ubuntu:latest"), "scriptBucketName" -> WomString("my-stuff"), "filesystem" -> WomString("s3"))
+      val expectedRuntimeAttributes = expectedDefaults
+      assertAwsBatchRuntimeAttributesSuccessfulCreation(runtimeAttributes, expectedRuntimeAttributes)
+    }
+    "validate a valid Filesystem string entry local Filesystem" in {
+      val runtimeAttributes = Map("docker" -> WomString("ubuntu:latest"),"scriptBucketName" -> WomString(""), "filesystem" -> WomString("local"))
+      val expectedRuntimeAttributes = expectedDefaultsLocalFS
+      assertAwsBatchRuntimeAttributesSuccessfulCreation(runtimeAttributes, expectedRuntimeAttributes,WorkflowOptions.fromMap(Map.empty).get,
+        NonEmptyList.of("us-east-1a", "us-east-1b"), new AwsBatchConfiguration(AwsBatchTestConfigForLocalFS.AwsBatchBackendConfigurationDescriptor))
     }
 
     "fail to validate an invalid cpu entry" in {
@@ -351,7 +374,7 @@ class AwsBatchRuntimeAttributesSpec extends AnyWordSpecLike with Matchers with M
     val defaultedAttributes = RuntimeAttributeDefinition.addDefaultsToAttributes(
       staticRuntimeAttributeDefinitions, workflowOptions)(runtimeAttributes)
     val validatedRuntimeAttributes = runtimeAttributesBuilder.build(defaultedAttributes, NOPLogger.NOP_LOGGER)
-    AwsBatchRuntimeAttributes(validatedRuntimeAttributes, configuration.runtimeConfig)
+    AwsBatchRuntimeAttributes(validatedRuntimeAttributes, configuration.runtimeConfig, configuration.fileSystem)
   }
 
   private val emptyWorkflowOptions = WorkflowOptions.fromMap(Map.empty).get

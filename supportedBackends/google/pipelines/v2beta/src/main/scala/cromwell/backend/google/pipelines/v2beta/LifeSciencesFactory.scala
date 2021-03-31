@@ -2,33 +2,26 @@ package cromwell.backend.google.pipelines.v2beta
 
 import java.net.URL
 
-import cats.effect.IO
-import com.google.api.client.http.{HttpRequest, HttpRequestInitializer, HttpResponse}
+import com.google.api.client.http.{HttpRequest, HttpRequestInitializer}
 import com.google.api.services.bigquery.BigqueryScopes
-import com.google.api.services.cloudresourcemanager.CloudResourceManager
 import com.google.api.services.compute.ComputeScopes
 import com.google.api.services.lifesciences.v2beta.model._
-import com.google.api.services.lifesciences.v2beta.{CloudLifeSciences, CloudLifeSciencesScopes}
+import com.google.api.services.lifesciences.v2beta.CloudLifeSciences
 import com.google.api.services.oauth2.Oauth2Scopes
 import com.google.api.services.storage.StorageScopes
-import com.google.auth.http.HttpCredentialsAdapter
 import com.typesafe.config.ConfigFactory
-import cromwell.backend.google.pipelines.common.PipelinesApiConfigurationAttributes.{GcsTransferConfiguration, VirtualPrivateCloudConfiguration}
+import cromwell.backend.google.pipelines.common.PipelinesApiConfigurationAttributes.GcsTransferConfiguration
 import cromwell.backend.google.pipelines.common.action.ActionUtils
 import cromwell.backend.google.pipelines.common.api.PipelinesApiRequestFactory.CreatePipelineParameters
 import cromwell.backend.google.pipelines.common.api.{PipelinesApiFactoryInterface, PipelinesApiRequestFactory}
-import cromwell.backend.google.pipelines.common.{GoogleCloudScopes, ProjectLabels}
+import cromwell.backend.google.pipelines.common.{GoogleCloudScopes, VpcAndSubnetworkProjectLabelValues}
 import cromwell.backend.google.pipelines.v2beta.PipelinesConversions._
 import cromwell.backend.google.pipelines.v2beta.api._
 import cromwell.backend.standard.StandardAsyncJob
 import cromwell.cloudsupport.gcp.auth.GoogleAuthMode
 import cromwell.core.DockerConfiguration
 import cromwell.core.logging.JobLogger
-import io.circe.Decoder
-import io.circe.generic.semiauto.deriveDecoder
-import io.circe.parser.decode
 import mouse.all._
-import org.apache.commons.lang3.exception.ExceptionUtils
 import wdl4s.parser.MemoryUnit
 import wom.format.MemorySize
 
@@ -37,6 +30,7 @@ import scala.collection.JavaConverters._
 case class LifeSciencesFactory(applicationName: String, authMode: GoogleAuthMode, endpointUrl: URL, location: String)(implicit gcsTransferConfiguration: GcsTransferConfiguration) extends PipelinesApiFactoryInterface
   with ContainerSetup
   with MonitoringAction
+  with CheckpointingAction
   with Localization
   with UserAction
   with Delocalization
@@ -44,9 +38,6 @@ case class LifeSciencesFactory(applicationName: String, authMode: GoogleAuthMode
   with SSHAccessAction {
 
   override def build(initializer: HttpRequestInitializer): PipelinesApiRequestFactory = new PipelinesApiRequestFactory {
-    implicit lazy val googleProjectMetadataLabelDecoder: Decoder[ProjectLabels] = deriveDecoder
-
-    val ResourceManagerAuthScopes = List(CloudLifeSciencesScopes.CLOUD_PLATFORM)
     val VirtualPrivateCloudNetworkPath = "projects/%s/global/networks/%s/"
 
     val lifeSciences: CloudLifeSciences = new CloudLifeSciences.Builder(
@@ -66,73 +57,24 @@ case class LifeSciencesFactory(applicationName: String, authMode: GoogleAuthMode
     }
 
     override def runRequest(createPipelineParameters: CreatePipelineParameters, jobLogger: JobLogger): HttpRequest = {
+      def createNetworkWithVPC(vpcAndSubnetworkProjectLabelValues: VpcAndSubnetworkProjectLabelValues): Network = {
+        val network = new Network()
+          .setUsePrivateAddress(createPipelineParameters.effectiveNoAddressValue)
+          .setNetwork(VirtualPrivateCloudNetworkPath.format(createPipelineParameters.projectId, vpcAndSubnetworkProjectLabelValues.vpcName))
 
-      def projectMetadataRequest(vpcConfig: VirtualPrivateCloudConfiguration): IO[HttpRequest] = {
-        IO {
-          val workflowOptions = createPipelineParameters.jobDescriptor.workflowDescriptor.workflowOptions
-          val credentials = vpcConfig.auth.credentials(workflowOptions.get(_).get, ResourceManagerAuthScopes)
-
-          val httpCredentialsAdapter = new HttpCredentialsAdapter(credentials)
-          val cloudResourceManagerBuilder = new CloudResourceManager
-          .Builder(GoogleAuthMode.httpTransport, GoogleAuthMode.jsonFactory, httpCredentialsAdapter)
-            .setApplicationName(applicationName)
-            .build()
-
-          val project = cloudResourceManagerBuilder.projects().get(createPipelineParameters.projectId)
-
-          project.buildHttpRequest()
-        }
+        vpcAndSubnetworkProjectLabelValues.subnetNameOpt.foreach(subnet => network.setSubnetwork(subnet))
+        network
       }
-
-
-      def projectMetadataResponseToLabels(httpResponse: HttpResponse): IO[ProjectLabels] = {
-        IO.fromEither(decode[ProjectLabels](httpResponse.parseAsString())).handleErrorWith {
-          e => IO.raiseError(new RuntimeException(s"Failed to parse labels from project metadata response from Google Cloud Resource Manager API. " +
-            s"${ExceptionUtils.getMessage(e)}", e))
-        }
-      }
-
-      def networkFromLabels(vpcConfig: VirtualPrivateCloudConfiguration, projectLabels: ProjectLabels): Network = {
-        val networkLabelOption = projectLabels.labels.find(l => l._1.equals(vpcConfig.name))
-        val subnetworkLabelOption = vpcConfig.subnetwork.flatMap(s => projectLabels.labels.find(l => l._1.equals(s)))
-
-        networkLabelOption match {
-          case Some(networkLabel) =>
-            val network = new Network()
-              .setUsePrivateAddress(createPipelineParameters.effectiveNoAddressValue)
-              .setNetwork(VirtualPrivateCloudNetworkPath.format(createPipelineParameters.projectId, networkLabel._2))
-
-            subnetworkLabelOption foreach { case(_, subnet) => network.setSubnetwork(subnet) }
-            network
-          case None =>
-            // Falling back to running the job on default network since the project does not provide the custom network
-            // specifying keys in its metadata
-            new Network().setUsePrivateAddress(createPipelineParameters.effectiveNoAddressValue)
-        }
-      }
-
-
-      def createNetworkWithVPC(vpcConfig: VirtualPrivateCloudConfiguration): IO[Network] = {
-        for {
-          projectMetadataResponse <- projectMetadataRequest(vpcConfig).map(_.executeAsync().get())
-          projectLabels <- projectMetadataResponseToLabels(projectMetadataResponse)
-          networkLabels <- IO(networkFromLabels(vpcConfig, projectLabels))
-        } yield networkLabels
-      }
-
 
       def createNetwork(): Network = {
-        createPipelineParameters.virtualPrivateCloudConfiguration match {
-          case None => new Network().setUsePrivateAddress(createPipelineParameters.effectiveNoAddressValue)
-          case Some(vpcConfig) =>
-            createNetworkWithVPC(vpcConfig).handleErrorWith {
-              e => IO.raiseError(new RuntimeException(s"Failed to create Network object for project `${createPipelineParameters.projectId}`. " +
-                s"Error(s): ${ExceptionUtils.getMessage(e)}", e))
-            }.unsafeRunSync()
+        createPipelineParameters.vpcNetworkAndSubnetworkProjectLabels match {
+          case Some(vpcAndSubnetworkProjectLabelValues) => createNetworkWithVPC(vpcAndSubnetworkProjectLabelValues)
+          case _ => new Network().setUsePrivateAddress(createPipelineParameters.effectiveNoAddressValue)
         }
       }
 
-      val allDisksToBeMounted = createPipelineParameters.adjustedSizeDisks ++ createPipelineParameters.referenceDisksForLocalization
+      val allDisksToBeMounted = createPipelineParameters.adjustedSizeDisks ++
+        createPipelineParameters.referenceDisksForLocalizationOpt.getOrElse(List.empty)
 
       // Disks defined in the runtime attributes and reference-files-localization disks
       val disks = allDisksToBeMounted |> toDisks
@@ -146,6 +88,8 @@ case class LifeSciencesFactory(applicationName: String, authMode: GoogleAuthMode
       val deLocalization: List[Action] = deLocalizeActions(createPipelineParameters, mounts)
       val monitoringSetup: List[Action] = monitoringSetupActions(createPipelineParameters, mounts)
       val monitoringShutdown: List[Action] = monitoringShutdownActions(createPipelineParameters)
+      val checkpointingStart: List[Action] = checkpointingSetupActions(createPipelineParameters, mounts)
+      val checkpointingShutdown: List[Action] = checkpointingShutdownActions(createPipelineParameters)
       val sshAccess: List[Action] = sshAccessActions(createPipelineParameters, mounts)
 
       // adding memory as environment variables makes it easy for a user to retrieve the new value of memory
@@ -162,6 +106,8 @@ case class LifeSciencesFactory(applicationName: String, authMode: GoogleAuthMode
           deLocalization = deLocalization,
           monitoringSetup = monitoringSetup,
           monitoringShutdown = monitoringShutdown,
+          checkpointingStart = checkpointingStart,
+          checkpointingShutdown = checkpointingShutdown,
           sshAccess = sshAccess,
           isBackground = _.getRunInBackground,
         )
@@ -173,7 +119,7 @@ case class LifeSciencesFactory(applicationName: String, authMode: GoogleAuthMode
             ComputeScopes.COMPUTE,
             StorageScopes.DEVSTORAGE_FULL_CONTROL,
             GoogleCloudScopes.KmsScope,
-            // Profile and Email scopes are requirements for interacting with Martha v2
+            // Profile and Email scopes are requirements for interacting with Martha
             Oauth2Scopes.USERINFO_EMAIL,
             Oauth2Scopes.USERINFO_PROFILE,
             // Monitoring scope as POC
@@ -188,6 +134,19 @@ case class LifeSciencesFactory(applicationName: String, authMode: GoogleAuthMode
       val accelerators = createPipelineParameters.runtimeAttributes
         .gpuResource.map(toAccelerator).toList.asJava
 
+      val virtualMachine = new VirtualMachine()
+        .setDisks(disks.asJava)
+        .setPreemptible(createPipelineParameters.preemptible)
+        .setServiceAccount(serviceAccount)
+        .setMachineType(createPipelineParameters.runtimeAttributes |> toMachineType(jobLogger))
+        .setLabels(createPipelineParameters.googleLabels.map(label => label.key -> label.value).toMap.asJava)
+        .setNetwork(network)
+        .setAccelerators(accelerators)
+
+      createPipelineParameters.dockerImageCacheDiskOpt foreach { dockerImageCacheDisk =>
+        virtualMachine.setDockerCacheImages(List(dockerImageCacheDisk).asJava)
+      }
+
       /*
        * Adjust using docker images used by Cromwell as well as the tool's docker image size if available
        */
@@ -198,21 +157,19 @@ case class LifeSciencesFactory(applicationName: String, authMode: GoogleAuthMode
         val userCommandImageSizeInGB = MemorySize(userCommandImageSizeInBytes.toDouble, MemoryUnit.Bytes).to(MemoryUnit.GB).amount
         val userCommandImageSizeRoundedUpInGB = userCommandImageSizeInGB.ceil.toInt
 
-        val totalSize = fromRuntimeAttributes + userCommandImageSizeRoundedUpInGB + ActionUtils.cromwellImagesSizeRoundedUpInGB
-        jobLogger.info(s"Adjusting boot disk size to $totalSize GB: $fromRuntimeAttributes GB (runtime attributes) + $userCommandImageSizeRoundedUpInGB GB (user command image) + ${ActionUtils.cromwellImagesSizeRoundedUpInGB} GB (Cromwell support images)")
+        val totalSize = fromRuntimeAttributes +
+          createPipelineParameters
+            .dockerImageCacheDiskOpt
+            .map(_ => 0) // if we are using docker image cache then we don't need this additional volume for the boot disk
+            .getOrElse(userCommandImageSizeRoundedUpInGB + ActionUtils.cromwellImagesSizeRoundedUpInGB)
+
+        if (totalSize != fromRuntimeAttributes) {
+          jobLogger.info(s"Adjusting boot disk size to $totalSize GB: $fromRuntimeAttributes GB (runtime attributes) + $userCommandImageSizeRoundedUpInGB GB (user command image) + ${ActionUtils.cromwellImagesSizeRoundedUpInGB} GB (Cromwell support images)")
+        }
 
         totalSize
       }
-
-      val virtualMachine = new VirtualMachine()
-        .setDisks(disks.asJava)
-        .setPreemptible(createPipelineParameters.preemptible)
-        .setServiceAccount(serviceAccount)
-        .setMachineType(createPipelineParameters.runtimeAttributes |> toMachineType(jobLogger))
-        .setBootDiskSizeGb(adjustedBootDiskSize)
-        .setLabels(createPipelineParameters.googleLabels.map(label => label.key -> label.value).toMap.asJava)
-        .setNetwork(network)
-        .setAccelerators(accelerators)
+      virtualMachine.setBootDiskSizeGb(adjustedBootDiskSize)
 
       createPipelineParameters.runtimeAttributes.gpuResource foreach { resource =>
         virtualMachine.setNvidiaDriverVersion(resource.nvidiaDriverVersion)

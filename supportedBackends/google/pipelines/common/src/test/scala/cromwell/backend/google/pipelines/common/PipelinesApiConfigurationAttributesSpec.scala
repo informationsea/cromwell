@@ -1,9 +1,9 @@
 package cromwell.backend.google.pipelines.common
 
-import java.net.URL
-
 import cats.data.Validated.{Invalid, Valid}
+import cats.syntax.validated._
 import com.typesafe.config.{Config, ConfigFactory}
+import common.assertion.CromwellTimeoutSpec
 import common.exception.MessageAggregation
 import cromwell.backend.google.pipelines.common.PipelinesApiConfigurationAttributes.BatchRequestTimeoutConfiguration
 import cromwell.cloudsupport.gcp.GoogleConfiguration
@@ -11,15 +11,16 @@ import cromwell.filesystems.gcs.GcsPathBuilder
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
+import java.net.URL
 import scala.concurrent.duration._
 
-class PipelinesApiConfigurationAttributesSpec extends AnyFlatSpec with Matchers {
+class PipelinesApiConfigurationAttributesSpec extends AnyFlatSpec with CromwellTimeoutSpec with Matchers {
 
   import PipelinesApiTestConfig._
 
   behavior of "PipelinesApiAttributes"
 
-  val googleConfig = GoogleConfiguration(PapiGlobalConfig)
+  val googleConfig: GoogleConfiguration = GoogleConfiguration(PapiGlobalConfig)
   val runtimeConfig: Config = ConfigFactory.load()
 
   it should "parse correct PAPI config" in {
@@ -33,8 +34,7 @@ class PipelinesApiConfigurationAttributesSpec extends AnyFlatSpec with Matchers 
     pipelinesApiAttributes.maxPollingInterval should be(600)
     pipelinesApiAttributes.computeServiceAccount should be("default")
     pipelinesApiAttributes.restrictMetadataAccess should be(false)
-    pipelinesApiAttributes.memoryRetryConfiguration should be(None)
-    pipelinesApiAttributes.referenceFilesMapping.validReferenceFilesMap.isEmpty should be(true)
+    pipelinesApiAttributes.referenceFileToDiskImageMappingOpt.isEmpty should be(true)
   }
 
   it should "parse correct preemptible config" in {
@@ -165,41 +165,6 @@ class PipelinesApiConfigurationAttributesSpec extends AnyFlatSpec with Matchers 
     pipelinesApiAttributes.virtualPrivateCloudConfiguration should be(None)
   }
 
-  it should "parse memory-retry" in {
-    val customConfig =
-      """
-        |memory-retry {
-        |   error-keys = ["OutOfMemory", "Killed", "Exit123"]
-        |   multiplier = 1.1
-        |}""".stripMargin
-    val backendConfig = ConfigFactory.parseString(configString(customConfig))
-
-    val pipelinesApiAttributes = PipelinesApiConfigurationAttributes(googleConfig, backendConfig, "papi")
-    pipelinesApiAttributes.memoryRetryConfiguration.get.errorKeys shouldBe List("OutOfMemory", "Killed", "Exit123")
-    pipelinesApiAttributes.memoryRetryConfiguration.get.multiplier.value shouldBe 1.1
-  }
-
-  it should "parse memory-retry with only error-keys" in {
-    val customConfig =
-      """
-        |memory-retry {
-        |   error-keys = ["OutOfMemory", "Killed", "Exit123"]
-        |}""".stripMargin
-    val backendConfig = ConfigFactory.parseString(configString(customConfig))
-
-    val pipelinesApiAttributes = PipelinesApiConfigurationAttributes(googleConfig, backendConfig, "papi")
-    pipelinesApiAttributes.memoryRetryConfiguration.get.errorKeys shouldBe List("OutOfMemory", "Killed", "Exit123")
-    pipelinesApiAttributes.memoryRetryConfiguration.get.multiplier.value shouldBe 2.0
-  }
-
-  it should "parse memory-retry with empty body" in {
-    val customConfig = """memory-retry { }""".stripMargin
-    val backendConfig = ConfigFactory.parseString(configString(customConfig))
-
-    val pipelinesApiAttributes = PipelinesApiConfigurationAttributes(googleConfig, backendConfig, "papi")
-    pipelinesApiAttributes.memoryRetryConfiguration shouldBe None
-  }
-
   it should "not parse invalid config" in {
     val nakedConfig =
       ConfigFactory.parseString(
@@ -314,56 +279,6 @@ class PipelinesApiConfigurationAttributesSpec extends AnyFlatSpec with Matchers 
     errorsList should contain("Virtual Private Cloud configuration is invalid. Missing keys: `network-label-key`.")
   }
 
-  it should "not parse memory-retry without error-keys" in {
-    val config =
-      ConfigFactory.parseString(
-        """
-          |memory-retry {
-          |   multiplier = 1.1
-          |}
-        """.stripMargin)
-
-    val exception = intercept[IllegalArgumentException with MessageAggregation] {
-      PipelinesApiConfigurationAttributes(googleConfig, config, "papi")
-    }
-    val errorsList = exception.errorMessages.toList
-    errorsList should contain("memory-retry configuration is invalid. No error-keys provided.")
-  }
-
-  it should "not allow a positive multiplier less than 1.0" in {
-    val config =
-      ConfigFactory.parseString(
-        """
-          |memory-retry {
-          |   error-keys = ["OutOfMemory", "Killed", "Exit123"]
-          |   multiplier = 0.5
-          |}
-        """.stripMargin)
-
-    val exception = intercept[IllegalArgumentException with MessageAggregation] {
-      PipelinesApiConfigurationAttributes(googleConfig, config, "papi")
-    }
-    val errorsList = exception.errorMessages.toList
-    errorsList should contain("Value 0.5 for memory-retry.multiplier should be greater than 1.0.")
-  }
-
-  it should "not allow multiplier negative multiplier" in {
-    val config =
-      ConfigFactory.parseString(
-        """
-          |memory-retry {
-          |   error-keys = ["OutOfMemory", "Killed", "Exit123"]
-          |   multiplier = -2.0
-          |}
-        """.stripMargin)
-
-    val exception = intercept[IllegalArgumentException with MessageAggregation] {
-      PipelinesApiConfigurationAttributes(googleConfig, config, "papi")
-    }
-    val errorsList = exception.errorMessages.toList
-    errorsList should contain("Value -2.0 for memory-retry.multiplier should be greater than 1.0.")
-  }
-
   def configString(customContent: String = "", genomics: String = ""): String =
     s"""
       |{
@@ -406,53 +321,157 @@ class PipelinesApiConfigurationAttributesSpec extends AnyFlatSpec with Matchers 
     }
   }
 
-  it should "parse correct existing reference-disk-localization-manifest-files config" in {
-    val manifest1Path = "gs://bucket/manifest1.json"
-    val manifest2Path = "gs://bucket/manifest2.json"
-    val manifestConfigStr = s"""reference-disk-localization-manifest-files = ["$manifest1Path", "$manifest2Path"]""".stripMargin
-    val backendConfig = ConfigFactory.parseString(configString(manifestConfigStr))
-
-    val validatedGcsPathsToManifestFilesErrorOr = PipelinesApiConfigurationAttributes.validateGcsPathToManifestFile(backendConfig)
-    validatedGcsPathsToManifestFilesErrorOr match {
-      case Valid(validatedGcsPathsToManifestFilesOpt) =>
-        validatedGcsPathsToManifestFilesOpt match {
-          case Some(validatedGcsPathsToManifestFiles) =>
-            validatedGcsPathsToManifestFiles should contain allElementsOf List(GcsPathBuilder.validateGcsPath(manifest1Path), GcsPathBuilder.validateGcsPath(manifest2Path))
-          case None =>
-            fail("GCS paths to manifest files, parsed from config, should not be empty")
-        }
-      case Invalid(ex) =>
-        fail(s"Error while parsing GCS paths to manifest files from config: $ex")
-    }
-  }
-
-  it should "parse correct missing reference-disk-localization-manifest-files config" in {
+  it should "parse a missing \"reference-disk-localization-manifests\"" in {
     val backendConfig = ConfigFactory.parseString(configString())
 
-    val validatedGcsPathsToManifestFilesErrorOr = PipelinesApiConfigurationAttributes.validateGcsPathToManifestFile(backendConfig)
-    validatedGcsPathsToManifestFilesErrorOr match {
-      case Valid(validatedGcsPathsToManifestFilesOpt) =>
-        validatedGcsPathsToManifestFilesOpt shouldBe None
-      case Invalid(ex) =>
-        fail(s"Error while parsing GCS paths to manifest files from config: $ex")
+    val validation = PipelinesApiConfigurationAttributes.validateReferenceDiskManifestConfigs(backendConfig, "papi")
+
+    validation shouldBe None.validNel
+  }
+
+  it should "parse a present but empty \"reference-disk-localization-manifests\"" in {
+    val manifestConfig = "reference-disk-localization-manifests = []"
+
+    val backendConfig = ConfigFactory.parseString(configString(customContent = manifestConfig))
+
+    val validation = PipelinesApiConfigurationAttributes.validateReferenceDiskManifestConfigs(backendConfig, "papi")
+
+    validation shouldBe Option(List.empty).validNel
+  }
+
+  it should "parse a present and populated \"reference-disk-localization-manifests\"" in {
+    // Highly abridged versions of hg19 and hg38 manifests just to test for correctness
+    // of parsing.
+    val manifestConfig =
+    """
+      |reference-disk-localization-manifests = [
+      |{
+      |  "imageIdentifier" : "hg19-public-2020-10-26",
+      |  "diskSizeGb" : 10,
+      |  "files" : [ {
+      |    "path" : "gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.fasta.fai",
+      |    "crc32c" : 159565724
+      |  }, {
+      |    "path" : "gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.dict",
+      |    "crc32c" : 1679459712
+      |  }]
+      |},
+      |{
+      |  "imageIdentifier" : "hg38-public-2020-10-26",
+      |  "diskSizeGb" : 20,
+      |  "files" : [ {
+      |    "path" : "gcp-public-data--broad-references/hg38/v0/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz",
+      |    "crc32c" : 930173616
+      |  }, {
+      |    "path" : "gcp-public-data--broad-references/hg38/v0/exome_evaluation_regions.v1.interval_list",
+      |    "crc32c" : 289077232
+      |  }]
+      |}
+      |]
+      |""".stripMargin
+    val backendConfig = ConfigFactory.parseString(configString(manifestConfig))
+    val validation = PipelinesApiConfigurationAttributes.validateReferenceDiskManifestConfigs(backendConfig, "papi")
+    val manifests: List[ManifestFile] = validation.toEither.right.get.get
+
+    manifests shouldBe List(
+      ManifestFile(
+        imageIdentifier = "hg19-public-2020-10-26",
+        diskSizeGb = 10,
+        files = List(
+          ReferenceFile(
+            path = "gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.fasta.fai",
+            crc32c = 159565724
+          ),
+          ReferenceFile(
+            path = "gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.dict",
+            crc32c = 1679459712
+          )
+        )
+      ),
+      ManifestFile(
+        imageIdentifier = "hg38-public-2020-10-26",
+        diskSizeGb = 20,
+        files = List(
+          ReferenceFile(
+            path = "gcp-public-data--broad-references/hg38/v0/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz",
+            crc32c = 930173616
+          ),
+          ReferenceFile(
+            path = "gcp-public-data--broad-references/hg38/v0/exome_evaluation_regions.v1.interval_list",
+            crc32c = 289077232
+          )
+        )
+      )
+    )
+  }
+
+  it should "parse a present and invalid \"reference-disk-localization-manifests\"" in {
+    val badValues = List(
+      "\"foo\"",
+      "{ foo: bar }",
+      s"""
+         |[{
+         |   # missing imageIdentifier
+         |   "diskSizeGb" : 10,
+         |   "files" : [ {
+         |     "path" : "gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.fasta.fai",
+         |     "crc32c" : 159565724
+         |     }]
+         |}]""",
+      s"""
+         |[{
+         |   "imageIdentifier" : "hg19-public-2020-10-26",
+         |   # missing diskSizeGb
+         |   "files" : [ {
+         |     "path" : "gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.fasta.fai",
+         |     "crc32c" : 159565724
+         |     }]
+         |}]""",
+      s"""
+         |[{
+         |   "imageIdentifier" : "hg19-public-2020-10-26",
+         |   "diskSizeGb" : 10,
+         |   # missing files
+         |}]""",
+    )
+
+    badValues foreach { badValue =>
+      val customContent = s""""reference-disk-localization-manifests" = $badValue"""
+      val backendConfig = ConfigFactory.parseString(configString(customContent))
+      val validation = PipelinesApiConfigurationAttributes.validateReferenceDiskManifestConfigs(backendConfig, "papi")
+      validation.isInvalid shouldBe true
     }
   }
 
-  it should "parse correct empty reference-disk-localization-manifest-files config" in {
-    val manifestConfigStr = "reference-disk-localization-manifest-files = []"
-    val backendConfig = ConfigFactory.parseString(configString(manifestConfigStr))
 
-    val validatedGcsPathsToManifestFilesErrorOr = PipelinesApiConfigurationAttributes.validateGcsPathToManifestFile(backendConfig)
-    validatedGcsPathsToManifestFilesErrorOr match {
-      case Valid(validatedGcsPathsToManifestFilesOpt) =>
-        validatedGcsPathsToManifestFilesOpt match {
-          case Some(validatedGcsPathsToManifestFiles) =>
-            validatedGcsPathsToManifestFiles.isEmpty shouldBe true
+  it should "parse correct existing docker-image-cache-manifest-file config" in {
+    val dockerImageCacheManifest1Path = "gs://bucket/manifest1.json"
+    val dockerImageCacheManifestConfigStr = s"""docker-image-cache-manifest-file = "$dockerImageCacheManifest1Path""""
+    val backendConfig = ConfigFactory.parseString(configString(dockerImageCacheManifestConfigStr))
+
+    val validatedGcsPathToDockerImageCacheManifestFileErrorOr = PipelinesApiConfigurationAttributes.validateGcsPathToDockerImageCacheManifestFile(backendConfig)
+    validatedGcsPathToDockerImageCacheManifestFileErrorOr match {
+      case Valid(validatedGcsPathToDockerImageCacheManifestFileOpt) =>
+        validatedGcsPathToDockerImageCacheManifestFileOpt match {
+          case Some(validatedGcsPathToDockerCacheManifestFile) =>
+            validatedGcsPathToDockerCacheManifestFile shouldBe GcsPathBuilder.validateGcsPath(dockerImageCacheManifest1Path)
           case None =>
-            fail("GCS paths to manifest files, parsed from config, should not be None")
+            fail("GCS paths to docker image cache manifest files, parsed from config, should not be empty")
         }
       case Invalid(ex) =>
-        fail(s"Error while parsing GCS paths to manifest files from config: $ex")
+        fail(s"Error while parsing GCS paths to docker image cache manifest files from config: $ex")
+    }
+  }
+
+  it should "parse correct missing docker-image-cache-manifest-file config" in {
+    val backendConfig = ConfigFactory.parseString(configString())
+
+    val validatedGcsPathsToDockerImageCacheManifestFilesErrorOr = PipelinesApiConfigurationAttributes.validateReferenceDiskManifestConfigs(backendConfig, "unit-test-backend")
+    validatedGcsPathsToDockerImageCacheManifestFilesErrorOr match {
+      case Valid(validatedGcsPathsToDockerImageCacheManifestFilesOpt) =>
+        validatedGcsPathsToDockerImageCacheManifestFilesOpt shouldBe None
+      case Invalid(ex) =>
+        fail(s"Error while parsing GCS paths to docker image cache manifest files from config: $ex")
     }
   }
 }

@@ -1,5 +1,125 @@
 # Cromwell Change Log
 
+## 59 Release Notes
+
+### Bug Fixes
+
+* Fixed a pair of bugs that could cause workflows to fail unexpectedly with the errors "413 Request Entity Too Large"
+  and "java.net.SocketTimeoutException: Read timed out" when accessing Google Cloud Storage.
+
+## 58 Release Notes
+
+Internal CI-related changes only.
+
+## 57 Release Notes
+
+### Breaking configuration change to reference disk support on PAPI v2
+
+Beginning with Cromwell 57, reference disk manifests are now specified completely within Cromwell configuration
+rather than through a level of indirection to a manifest file stored in GCS. More details can be found
+[here](https://cromwell.readthedocs.io/en/develop/backends/Google#reference-disk-support).
+
+## 56 Release Notes
+
+### Retry with More Memory as workflow option
+
+The experimental memory retry feature gains per-workflow customization and includes breaking changes:
+* The per-backend configuration key `<backend>.config.memory-retry.error-keys` has been removed and replaced 
+with global key `system.memory-retry-error-keys`
+* The per-backend configuration key `<backend>.config.memory-retry.multiplier` has been replaced with **workflow option** 
+`memory_retry_multiplier`
+
+More details can be found [here](https://cromwell.readthedocs.io/en/develop/wf_options/Overview.md#retry-with-more-memory-multiplier).
+
+### Bug Fixes
+
+* Fixed a bug that caused Cromwell to mark workflows as failed after a single `500`, `503`, or `504` error from Google Cloud Storage.
+  * Cromwell will now retry these errors as designed.
+  * The default retry count is `5` and may be customized with `system.io.number-of-attempts`. 
+
+## 55 Release Notes
+
+### Apple Silicon support statement
+
+Users with access to the new Mac hardware should review [important information provided here](https://cromwell.readthedocs.io/en/stable/Releases).
+
+### Bug Fixes
+
+* Fixed a bug that prevented `read_json()` from working with arrays and primitives. The function now works as expected for all valid JSON data inputs. 
+More information on JSON Type to WDL Type conversion can be found [here](https://github.com/openwdl/wdl/blob/main/versions/1.0/SPEC.md#mixed-read_jsonstringfile).
+
+* Now retries HTTP 408 responses as well as HTTP 429 responses during DOS/DRS resolution requests.
+
+* Fixed a bug that prevented the call caching diff endpoint from working with scatters in workflows with archived metadata.
+
+### New Features
+
+#### Reference disk support on PAPI v2
+
+Cromwell now offers support for the use of reference disks on the PAPI v2 backend as an alternative to localizing
+reference inputs. More details [here](https://cromwell.readthedocs.io/en/develop/backends/Google#reference-disk-support).
+
+#### Docker image cache support on PAPI v2 lifesciences beta
+
+Cromwell now offers support for the use of Docker image caches on the PAPI v2 lifesciences beta backend. More details [here](https://cromwell.readthedocs.io/en/develop/backends/Google#docker-image-cache-support).
+
+#### Preemptible Recovery via Checkpointing
+
+* Cromwell can now help tasks recover from preemption by allowing them to specify a 'checkpoint' file which will be restored
+to the worker VM on the next attempt if the task is interrupted. More details [here](https://cromwell.readthedocs.io/en/develop/optimizations/CheckpointFiles)
+
+## 54 Release Notes
+
+### Bug Fixes
+
+* Fixed a bug that prevented `write_json()` from working with arrays and primitives. The function now works as expected for `Boolean`, `String`, `Integer`, `Float`,
+ `Pair[_, _]`, `Object`, `Map[_, _]` and `Array[_]` (including array of objects) type inputs. More information on WDL Type to JSON Type 
+ conversion can be found [here](https://github.com/openwdl/wdl/blob/main/versions/1.0/SPEC.md#mixed-read_jsonstringfile).
+
+### Spark backend support removal
+
+Spark backend was not widely used and it was decided to remove it from the codebase in order to narrow the scope of Cromwell code. 
+
+### Improved DRS Localizer logging
+
+Error logging while localizing a DRS URI should now be more clear especially when there is a Requester Pays bucket involved.
+
+### Per-backend hog factors
+Cromwell now allows overriding system-level log factors on back-end level. First, Cromwell will try to use hog-factor 
+defined in the backend config, and if it is not defined, it will default to using system-wide hog factor.
+```conf
+backend {
+  providers {
+    PAPIv2 {
+      config {
+        hog-factor: 2
+      }
+    }
+  }
+}
+```
+For more information about hog factors please see [this page](https://cromwell.readthedocs.io/en/develop/cromwell_features/HogFactors/).
+
+### `martha_v2` Support Removed
+
+Cromwell now only supports resolving DOS or DRS URIs through [Martha](https://github.com/broadinstitute/martha)'s most
+recent metadata endpoint `martha_v3`, dropping support for Martha's previous metadata endpoint `martha_v2`. To switch to
+the new version of Martha's metadata endpoint, update the `martha.url` found in the [filesystems
+config](https://cromwell.readthedocs.io/en/stable/filesystems/Filesystems/#overview) to point to `/martha_v3`. More
+information on Martha's `martha_v3` request and response schema can be found
+[here](https://github.com/broadinstitute/martha#martha-v3).
+
+### DOS/DRS `localization_optional` Support
+
+When running on a backend that supports `localization_optional: true` any DOS or DRS `File` values in the generated
+command line will be substituted with the `gsUri` returned from Martha's `martha_v3` endpoint. More information on
+`localization_optional` can be found [here](https://cromwell.readthedocs.io/en/stable/optimizations/FileLocalization/).
+
+### DOS/DRS metadata retrieval retried by default
+
+Attempts to retrieve DOS/DRS metadata from Martha will be retried by default. More information can be found
+[here](https://cromwell.readthedocs.io/en/stable/optimizations/FileLocalization/).
+
 ## 53 Release Notes
 
 ### Martha v3 Support

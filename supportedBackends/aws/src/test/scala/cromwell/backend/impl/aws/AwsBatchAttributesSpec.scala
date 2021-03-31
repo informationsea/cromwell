@@ -32,13 +32,14 @@
 package cromwell.backend.impl.aws
 
 import com.typesafe.config.ConfigFactory
+import common.assertion.CromwellTimeoutSpec
 import common.exception.MessageAggregation
 import cromwell.cloudsupport.aws.AwsConfiguration
 import cromwell.core.Tags._
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
-class AwsBatchAttributesSpec extends AnyFlatSpec with Matchers {
+class AwsBatchAttributesSpec extends AnyFlatSpec with CromwellTimeoutSpec with Matchers {
 
   import AwsBatchTestConfig._
 
@@ -83,11 +84,28 @@ class AwsBatchAttributesSpec extends AnyFlatSpec with Matchers {
       |
       |
       |   filesystems = {
-      |     s3 {
+      |     local {
       |       // A reference to a potentially different auth for manipulating files via engine functions.
-      |       auth = "application-default"
+      |       auth = "default"
       |     }
       |   }
       |}
       | """.stripMargin
+  def configStringS3(): String =
+    s"""
+       |{
+       |   root = "s3://myBucket"
+       |   maximum-polling-interval = 600
+       |   numSubmitAttempts = 6
+       |   numCreateDefinitionAttempts = 6
+       |
+       |
+       |   filesystems = {
+       |     s3 {
+       |       // A reference to a potentially different auth for manipulating files via engine functions.
+       |       auth = "application-default"
+       |     }
+       |   }
+       |}
+       | """.stripMargin
 }
