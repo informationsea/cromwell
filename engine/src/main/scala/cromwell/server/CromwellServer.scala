@@ -3,6 +3,7 @@ package cromwell.server
 import akka.actor.{ActorContext, ActorLogging, Props}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.server.Directives._
+import akka.http.scaladsl.server.directives.Credentials
 import akka.http.scaladsl.server.Route
 import akka.stream.ActorMaterializer
 import common.util.VersionUtil
@@ -45,6 +46,13 @@ class CromwellServerActor(cromwellSystem: CromwellSystem, gracefulShutdown: Bool
   val webserviceConf = cromwellSystem.config.getConfig("webservice")
   val interface = webserviceConf.getString("interface")
   val port = webserviceConf.getInt("port")
+  val secret = if (webserviceConf.hasPath("secret")) Some(webserviceConf.getString("secret")) else None
+
+  def authenticateUser(credentials: Credentials): Option[String] =
+    credentials match {
+      case p @ Credentials.Provided(id) if p.verify(secret.get) => Some(id)
+      case _ => None
+    }
 
   /**
     * /api routes have special meaning to devops' proxy servers. NOTE: the oauth mentioned on the /api endpoints in
@@ -54,8 +62,12 @@ class CromwellServerActor(cromwellSystem: CromwellSystem, gracefulShutdown: Bool
   val apiRoutes: Route = pathPrefix("api")(concat(workflowRoutes, womtoolRoutes))
   val nonApiRoutes: Route = concat(engineRoutes, swaggerUiResourceRoute, wesRoutes)
   val allRoutes: Route = concat(apiRoutes, nonApiRoutes)
+  val finalRoutes = secret match {
+    case Some(_) => authenticateBasic("Authentication", authenticateUser) { _ => allRoutes }
+    case _ => allRoutes
+  }
 
-  val serverBinding = Http().bindAndHandle(allRoutes, interface, port)
+  val serverBinding = Http().bindAndHandle(finalRoutes, interface, port)
 
   CromwellShutdown.registerUnbindTask(actorSystem, serverBinding)
 

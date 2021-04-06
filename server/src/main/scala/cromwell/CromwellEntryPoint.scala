@@ -3,6 +3,7 @@ package cromwell
 import akka.actor.ActorSystem
 import akka.actor.CoordinatedShutdown.JvmExitReason
 import akka.http.scaladsl.unmarshalling.Unmarshal
+import akka.http.javadsl.model.headers.HttpCredentials
 import akka.pattern.GracefulStopSupport
 import akka.stream.ActorMaterializer
 import cats.data.Validated._
@@ -93,7 +94,12 @@ object CromwellEntryPoint extends GracefulStopSupport {
     implicit val ec = actorSystem.dispatcher
     implicit val cs = IO.contextShift(ec)
 
-    val cromwellClient = new CromwellClient(args.host, "v2")
+    val credential = args.secret match {
+      case Some(s) => Some(HttpCredentials.createBasicHttpCredentials("cromwell", s))
+      case _ => None
+    }
+
+    val cromwellClient = new CromwellClient(args.host, "v2", credential)
 
     val singleSubmission = validateSubmitArguments(args)
     val submissionFuture = () => {

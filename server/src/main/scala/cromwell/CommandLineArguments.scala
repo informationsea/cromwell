@@ -44,7 +44,8 @@ case class CommandLineArguments(command: Option[Command] = None,
                                 workflowLabels: Option[Path] = None,
                                 imports: Option[Path] = None,
                                 metadataOutput: Option[Path] = None,
-                                host: URL = CommandLineArguments.DefaultCromwellHost
+                                host: URL = CommandLineArguments.DefaultCromwellHost,
+                                secret: Option[String] = None,
                                ) {
   private lazy val cwlPreProcessor = new CwlPreProcessor()
   private lazy val isCwl = workflowType.exists(_.equalsIgnoreCase("cwl"))
