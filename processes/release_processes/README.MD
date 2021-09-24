@@ -12,7 +12,7 @@ If you're the lucky "Release Rotation Engineer" this time, you should do the fol
 1. Check that all most recent executions of Cromwell's Jenkins tests have succeeded, and that all those executions were 
 against the most recent commit in "develop" branch. There are 2 groups of Jenkins tests which have to be checked (you 
 will need to be on the Broad internal network or VPN to open the following links):
-    1. Tests for various backends supported by Cromwell. Log into Jenkins [here](https://gotc-jenkins.dsp-techops.broadinstitute.org), check the tests [here](https://gotc-jenkins.dsp-techops.broadinstitute.org/view/cromwell-cron/job/cromwell-cron-parent/).
+    1. Tests for various backends supported by Cromwell. Log into Jenkins [here](https://fc-jenkins.dsp-techops.broadinstitute.org), check the tests [here](https://fc-jenkins.dsp-techops.broadinstitute.org/job/cromwell-cron-parent/).
     1. Tests for Cromwell in Terra environment. Log into Jenkins [here](https://fc-jenkins.dsp-techops.broadinstitute.org), check the tests [here](https://fc-jenkins.dsp-techops.broadinstitute.org/view/Batch/).
 1. [Run the publish script to create a new version of Cromwell](#how-to-publish-a-new-cromwell-version)  
 1. [Run through the "How to Release Cromwell into Firecloud" process](#how-to-release-cromwell-into-firecloud)  
@@ -77,7 +77,7 @@ the release is published.
 * Check that the workflow succeeded
 * Check that there's now a new Cromwell release listed [here](https://github.com/broadinstitute/cromwell/releases).
 * If publishing to Homebrew, check that there's a Homebrew PR for the new Cromwell version [here](https://github.com/Homebrew/homebrew-core/pulls) (and that it passes their CI)
-* Have a look at https://travis-ci.com/broadinstitute/cromwell/branches. There should be a build for the new release tag that publishes new docker images for the version.
+* Look [in Travis](https://app.travis-ci.com/github/broadinstitute/cromwell/branches) for the release tag build that will publish Docker images for the new version.
 * Let `#dsp-batch` know that it's okay to resume merges to `develop`.
 
 ### How to Release Cromwell into Firecloud / Terra
@@ -94,6 +94,8 @@ If so, refer to the additional details in the [full document](https://docs.googl
 #### Performance Testing
 
 This performance testing process happens as part of the release into FireCloud / Terra.
+
+* **Note:** Performance testing is currently broken, please see [CROM-6795](https://broadworkbench.atlassian.net/browse/CROM-6795) for details. Please skip the remainder of this `Performance Testing` section until these issues are resolved.
 
 * **Note:** This process is non-blocking and optional for HOTFIX releases.
 

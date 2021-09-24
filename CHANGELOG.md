@@ -1,9 +1,61 @@
 # Cromwell Change Log
 
+## 68 Release Notes
+
+### Virtual Private Cloud
+
+Previous Cromwell versions allowed PAPIV2 jobs to run on a specific subnetwork inside a private network by adding the
+information to Google Cloud project labels.
+
+Cromwell now allows PAPIV2 jobs to run on a specific subnetwork inside a private network by adding the network and
+subnetwork name directly inside the `virtual-private-cloud` backend configuration. More info
+[here](https://cromwell.readthedocs.io/en/stable/backends/Google/).
+
+## 67 Release Notes
+
+### Configuration updates for improved scaling
+
+Some configuration changes were introduced in Cromwell 67 to support improved scaling. See Cromwell's `reference.conf` for details on new parameters.
+
+* I/O throttling moved from `io` to its own `io.throttle` stanza; config updates may be required if these values are currently being overridden in local deployments.
+
+* The default `system.job-rate-control` has been changed from 50 per second to 20 per 10 seconds.
+
+* New configuration parameters have been introduced for values which were previously hardcoded constants:
+  * `system.file-hash-batch-size`, value updated from `100` to `50`.
+  * `io.gcs.max-batch-size`, value stays the same at `100`.
+  * `io.gcs.max-batch-duration`, value stays the same at `5 seconds`.
+
+* New configuration parameters which should not require updating:
+  * `io.command-backpressure-staleness`
+  * `io.backpressure-extension-log-threshold`
+  * `load-control.io-normal-window-minimum`
+  * `load-control.io-normal-window-maximum`
+
+* `io.nio.parallelism` was previously misspelled in `reference.conf` but not in Cromwell's configuration reading code. Only correct spellings of this configuration key had or will have effect.
+
+## 66 Release Notes
+
+### Google Artifact Registry Support
+Cromwell now supports call caching when using Docker images hosted on
+[Google Artifact Registry](https://cloud.google.com/artifact-registry).
+
+### Google Image Repository Hashing Updates
+The previously documented `docker.hash-lookup.gcr` configuration has been renamed to `docker.hash-lookup.google` and
+now applies to both Google Container Registry (GCR) and Google Artifact Registry (GAR) repositories.
+Support for the `docker.hash-lookup.gcr-api-queries-per-100-seconds` configuration key has been formally discontinued
+and a bug preventing correct handling of `docker.hash-lookup...throttle` configuration has been fixed.
+Please see Cromwell's bundled
+[`reference.conf`](https://github.com/broadinstitute/cromwell/blob/develop/core/src/main/resources/reference.conf)
+for more details.
+
 ## 65 Release Notes
 
 * An additional set of metrics relating to metadata age were added.
-* No user facing changes in Cromwell 65.  
+
+### AMD Rome support on PAPI v2
+On the PAPI v2 backends "AMD Rome" is now supported as a CPU platform. More details can be found
+[here](https://cromwell.readthedocs.io/en/develop/RuntimeAttributes/#cpuplatform).
 
 ## 64 Release Notes
 
