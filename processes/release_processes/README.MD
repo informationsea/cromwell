@@ -54,10 +54,10 @@ This is optional, but I find it useful. Make or copy the following files into so
 }
 ```
 
-#### Make sure docker will have enough memory
+#### Make sure Docker will have enough memory
 
-I had to follow the instructions [here](https://docs.docker.com/docker-for-mac/#resources) to increase my docker memory.
-I chose to increase it from 2GB to 8GB but 4 might have been sufficient.
+I had to follow the instructions [here](https://docs.docker.com/docker-for-mac/#resources) to increase my Docker memory.
+I chose to increase it from 2GB to 8GB; 4GB is not sufficient.
 
 #### Let people know the publish is underway
 
@@ -66,7 +66,8 @@ the release is published.
 
 #### Run the `publish_workflow.wdl` Workflow
 
-* Run the Cromwell instance using the local-backend.
+* Run the Cromwell instance using the Local backend. The publish workflow is quite resource intensive; it's a good idea to
+  shut down other resource intensive apps before launching it to avoid painfully slow or failed executions.
     * In server mode with a persistent backing database is probably a good idea - it will allow call caching to happen if you need to restart for any reason.
       Some instructions for using a Dockerized MySQL server and CI config [here](#cromwell-setup-for-publishing).
 
@@ -90,23 +91,6 @@ the deploy to make sure user impact in minimized.
 If so, refer to the additional details in the [full document](https://docs.google.com/document/d/1EEzwemE8IedCplIwL506fiqXr0262Pz4G0x6Cr6V-5E). 
 
 ![firecloud-develop](firecloud-develop.dot.png) 
-
-#### Performance Testing
-
-This performance testing process happens as part of the release into FireCloud / Terra.
-
-* **Note:** Performance testing is currently broken, please see [CROM-6795](https://broadworkbench.atlassian.net/browse/CROM-6795) for details. Please skip the remainder of this `Performance Testing` section until these issues are resolved.
-
-* **Note:** This process is non-blocking and optional for HOTFIX releases.
-
-1. Look at the [performance testing spreadsheet](https://docs.google.com/spreadsheets/d/1ksSHJdODuqqmvJ_94zZdc33Ai1Xv_53XzpsDd8jdmB0/edit#gid=479925276)
-for any performance changes since the previous release.
-
-2. A small amount of jitter is acceptable. So long as the lines are holding stable (or improving!), we consider Cromwell performance to not have regressed.
-
-    * **Note:** If the spreadsheet is out of date, go to the testResults.tsv artifacts for recent runs of [Cromwell Perf: Limit Finder](https://fc-jenkins.dsp-techops.broadinstitute.org/job/cromwell-perf-limit-finder/)
-runs and fill in any missing entries in the table.
- 
 
 ### How to Deploy Cromwell in CaaS staging and CaaS prod
 
