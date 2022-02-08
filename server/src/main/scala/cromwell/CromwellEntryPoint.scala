@@ -245,7 +245,8 @@ object CromwellEntryPoint extends GracefulStopSupport {
           labelsJson = l,
           importsZip = z.loadBytes,
           warnings = Vector.empty,
-          workflowOnHold = false)
+          workflowOnHold = false,
+          requestedWorkflowId = None)
       case (ValidSubmission(s, u, r, i, o, l, None), _) =>
         //noinspection RedundantDefaultArgument
         WorkflowSourceFilesWithoutImports.apply(
@@ -258,7 +259,8 @@ object CromwellEntryPoint extends GracefulStopSupport {
           workflowOptions = o,
           labelsJson = l,
           warnings = Vector.empty,
-          workflowOnHold = false)
+          workflowOnHold = false,
+          requestedWorkflowId = None)
     }
 
     val sourceFiles = for {
